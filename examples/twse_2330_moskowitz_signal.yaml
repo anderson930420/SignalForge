@@ -1,0 +1,17 @@
+signal_name: moskowitz_momentum
+source: moskowitz_2024
+
+factor_params:
+  lookback_12m: 252
+  lookback_1m: 21
+  vol_window: 21
+
+symbols:
+  - TWSE:2330
+
+datetime_range:
+  start: "2023-01-01T00:00:00Z"
+  end: "2024-12-31T23:59:59Z"
+
+output:
+  artifacts_dir: artifacts/twse_2330_moskowitz

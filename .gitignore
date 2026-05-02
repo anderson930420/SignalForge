@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.DS_Store
+.env
+.env.*
+data/
+artifacts/
+src/obsidian_logger.py
+temp_log.txt
+
