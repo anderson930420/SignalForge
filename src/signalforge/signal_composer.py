@@ -57,7 +57,9 @@ class SignalComposer:
         result["signal_name"] = [signal_name]
         result["source"] = [source]
 
-        if "signal_value" in factor_output.columns:
+        if "factor_value" in factor_output.columns:
+            result["signal_value"] = factor_output["factor_value"].iloc[0]
+        elif "signal_value" in factor_output.columns:
             result["signal_value"] = factor_output["signal_value"].iloc[0]
         else:
             result["signal_value"] = None
@@ -110,7 +112,9 @@ def compose_signal(
     result["signal_name"] = [signal_name]
     result["source"] = [source]
 
-    if "signal_value" in factor_output.columns:
+    if "factor_value" in factor_output.columns:
+        result["signal_value"] = factor_output["factor_value"].iloc[0]
+    elif "signal_value" in factor_output.columns:
         result["signal_value"] = factor_output["signal_value"].iloc[0]
     else:
         result["signal_value"] = None

@@ -8,11 +8,12 @@ from signalforge.schemas import (
 )
 
 
-def load_ohlcv_csv(filepath: str) -> pd.DataFrame:
-    """Load OHLCV data from CSV file.
+def local_ohlcv_csv(filepath: str, symbol: str | None = None) -> pd.DataFrame:
+    """Load OHLCV data from local CSV file.
 
     Args:
         filepath: Path to CSV file with OHLCV data
+        symbol: Optional symbol to inject if CSV doesn't contain it
 
     Returns:
         DataFrame with normalized OHLCV columns
@@ -36,7 +37,25 @@ def load_ohlcv_csv(filepath: str) -> pd.DataFrame:
     if "datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
 
+    if symbol is not None and "symbol" not in df.columns:
+        df["symbol"] = symbol
+
     return df
+
+
+def load_ohlcv_csv(filepath: str) -> pd.DataFrame:
+    """Load OHLCV data from CSV file.
+
+    Args:
+        filepath: Path to CSV file with OHLCV data
+
+    Returns:
+        DataFrame with normalized OHLCV columns
+
+    Raises:
+        MissingColumnsError: If required OHLCV columns are absent
+    """
+    return local_ohlcv_csv(filepath, symbol=None)
 
 
 def validate_ohlcv_quality(df: pd.DataFrame) -> list[dict]:
