@@ -10,20 +10,20 @@ DataRegistry → FactorRegistry → Factor → SignalComposer → Export
 
 ## Component Architecture
 
-```
+```text
 signalforge generate
-├── config loading (PyYAML)
-├── DataRegistry.load_csv()
-├── FactorRegistry.get()
-├── factor.calculate()
+├── config loading and validation (PyYAML)
+├── DataRegistry.local_ohlcv_csv()
+├── FactorRegistry.get_factor()
+├── factor.compute()
 ├── SignalComposer.compose()
-└── export artifacts
+└── export required artifacts
 ```
 
 ## Implementation Location
 
 - CLI entry point: `src/signalforge/cli.py`
-- CLI module: `src/signalforge/` (new)
+- Optional orchestration module: `src/signalforge/pipeline.py`
 
 ## Public CLI Contract
 
@@ -45,13 +45,13 @@ factor_params:
   skip_days: 21
 
 data_source:
-  type: csv
+  type: local_ohlcv_csv
   path: /path/to/data.csv
-  symbol: TWSE:2330
+  symbol: "2330"
 
 datetime_range:
-  start: "2023-01-01T00:00:00Z"
-  end: "2024-12-31T23:59:59Z"
+  start: "2023-01-01"
+  end: "2024-12-31"
 
 output:
   artifacts_dir: artifacts
@@ -68,6 +68,14 @@ artifacts/
         └── data_quality_report.json
 ```
 
+## Success Output
+
+After successful generation, the CLI SHALL print the generated artifact paths:
+
+- signal.csv
+- signal_contract.yaml
+- data_quality_report.json
+
 ## Key Implementation Notes
 
 ### Config Loading
@@ -80,7 +88,7 @@ Use `DataRegistry.local_ohlcv_csv(filepath, symbol)` to load OHLCV data.
 
 ### Factor Resolution
 
-Use `FactorRegistry.get(factor_name)` to get the factor. Register built-in factors at startup.
+Use `FactorRegistry.get_factor(factor_name)` to get the factor. Register built-in factors at startup.
 
 ### Signal Composition
 

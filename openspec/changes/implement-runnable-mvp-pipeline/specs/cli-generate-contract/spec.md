@@ -24,7 +24,7 @@ source: string            # Source identifier
 factor_name: string       # Factor to use (must match FactorRegistry name)
 factor_params: dict        # Factor-specific parameters
 data_source:
-  type: "csv"             # MVP supports only local CSV
+  type: "local_ohlcv_csv"   # MVP supports only local CSV
   path: string            # Path to CSV file
   symbol: string | null   # Symbol to inject (if not in CSV)
 datetime_range:
@@ -60,7 +60,7 @@ All config field constraints SHALL be enforced during validation.
 
 #### Scenario: data_source.type Constraint
 - **WHEN** data_source.type is validated
-- **THEN** It SHALL be "csv" in MVP
+- **THEN** It SHALL be "local_ohlcv_csv" in MVP
 
 #### Scenario: data_source.path Constraint
 - **WHEN** data_source.path is validated
