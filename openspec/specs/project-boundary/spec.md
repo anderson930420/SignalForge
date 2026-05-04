@@ -7,9 +7,7 @@ Define the ownership boundary of SignalForge MVP, excluding concerns owned by ot
 ## Owner
 
 SignalForge
-
 ## Requirements
-
 ### Requirement: SignalForge Ownership Scope
 
 SignalForge SHALL own the following concerns:
@@ -68,3 +66,12 @@ SignalForge MVP SHALL NOT include backtest.py, performance metric ranking, portf
 #### Scenario: MVP Exclusions
 - **WHEN** MVP implementation decisions are made
 - **THEN** The implementation SHALL NOT include excluded features
+
+### Requirement: Smoke Export Boundary
+
+The AlphaForge compatibility smoke export package SHALL be produced without importing AlphaForge and SHALL NOT add AlphaForge as a SignalForge dependency.
+
+#### Scenario: No AlphaForge Runtime Coupling
+- **WHEN** the smoke export package is defined or later implemented
+- **THEN** SignalForge SHALL remain isolated from AlphaForge internals and dependencies
+
