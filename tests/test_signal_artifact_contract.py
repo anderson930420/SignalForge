@@ -248,6 +248,32 @@ class TestSignalComposer:
                 source="test_source",
             )
 
+    def test_compose_full_series_preserves_warmup_rows(self):
+        factor_output = pd.DataFrame({"signal_value": [None, 0.5, -0.25]})
+        datetime = pd.date_range("2024-01-01", periods=3, tz="UTC")
+        available_at = pd.date_range("2024-01-01", periods=3, tz="UTC")
+
+        composer = SignalComposer()
+        composer.set_validator(SignalValidator())
+
+        result = composer.compose(
+            factor_output=factor_output,
+            datetime=datetime,
+            available_at=available_at,
+            symbol="AAPL",
+            signal_name="test_signal",
+            source="test_source",
+        )
+
+        assert len(result) == 3
+        assert list(result.columns) == [
+            "datetime", "available_at", "symbol", "signal_name",
+            "signal_value", "signal_binary", "source"
+        ]
+        assert pd.isna(result["signal_value"].iloc[0])
+        assert result["signal_binary"].tolist() == [0, 1, 0]
+        assert (result["available_at"] <= result["datetime"]).all()
+
 
 class TestDeterministicExport:
     """Tests for deterministic export."""

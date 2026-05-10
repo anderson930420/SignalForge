@@ -1,16 +1,18 @@
 signal_name: moskowitz_momentum
 source: moskowitz_2024
+factor_name: moskowitz_momentum
 
 factor_params:
-  lookback_12m: 252
-  lookback_1m: 21
-  vol_window: 21
+  lookback_days: 252
+  skip_days: 21
 
-symbols:
-  - TWSE:2330
+data_source:
+  type: local_ohlcv_csv
+  path: data/ohlcv_twse_2330.csv
+  symbol: "2330"
 
 datetime_range:
-  start: "2023-01-01T00:00:00Z"
+  start: "2021-01-04T00:00:00Z"
   end: "2024-12-31T23:59:59Z"
 
 output:

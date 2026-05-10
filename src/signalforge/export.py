@@ -1,7 +1,6 @@
 """Artifact writing and deterministic file layout."""
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +8,10 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from signalforge.compatibility import validate_signal_csv
+from signalforge.compatibility import (
+    validate_signal_csv,
+    validate_signal_market_date_alignment,
+)
 from signalforge.schemas import ExportError, SIGNAL_COLUMNS, SignalValidator
 from signalforge.schemas import OHLCV_COLUMNS
 
@@ -43,8 +45,13 @@ def export_signal_csv(
 
     df = df[SIGNAL_COLUMNS]
 
+    df_sorted = df.sort_values(
+        by=["datetime", "symbol", "signal_name"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
     try:
-        df.to_csv(filepath, index=False, lineterminator="\n")
+        df_sorted.to_csv(filepath, index=False, lineterminator="\n")
     except Exception as e:
         raise ExportError(f"Failed to export signal.csv: {e}")
 
@@ -72,7 +79,7 @@ def export_signal_contract_yaml(
 
     try:
         with open(filepath, "w") as f:
-            yaml.dump(contract_data, f, default_flow_style=False)
+            yaml.safe_dump(contract_data, f, default_flow_style=False, sort_keys=False)
     except Exception as e:
         raise ExportError(f"Failed to export signal_contract.yaml: {e}")
 
@@ -119,6 +126,13 @@ def build_signal_contract(
     row_count: int,
     signal_value_stats: dict[str, float],
     signal_binary_stats: dict[str, int],
+    *,
+    symbol: str | None = None,
+    frequency: str = "daily",
+    input_data: dict[str, Any] | None = None,
+    compatibility: dict[str, Any] | None = None,
+    version: str = "0.1.0",
+    factor_version: str = "0.1.0",
 ) -> dict[str, Any]:
     """Build signal contract YAML data structure.
 
@@ -136,34 +150,33 @@ def build_signal_contract(
         signal_binary_stats: Statistics for signal_binary
 
     Returns:
-        Contract data dictionary
+        Contract data dictionary (deterministic - no volatile timestamps)
     """
+    sorted_parameters = dict(sorted(parameters.items())) if parameters else {}
+
     return {
         "signal_name": signal_name,
-        "version": "1.0",
+        "version": version,
         "source": source,
-        "factor": factor_name,
-        "parameters": parameters,
-        "decision_rule": decision_rule,
-        "timing_rule": timing_rule,
-        "schema_version": "1.0",
-        "output_file": "signal.csv",
-        "exported_at": datetime.now().isoformat() + "Z",
-        "generator": "SignalForge",
-        "signals": [
-            {
-                "signal_name": signal_name,
-                "source": source,
-                "symbols": symbols,
-                "datetime_range": {
-                    "start": datetime_range[0],
-                    "end": datetime_range[1],
-                },
-                "row_count": row_count,
-                "signal_value_stats": signal_value_stats,
-                "signal_binary_stats": signal_binary_stats,
-            }
-        ],
+        "factor": {
+            "name": factor_name,
+            "version": factor_version,
+            "parameters": sorted_parameters,
+        },
+        "decision_rule": {
+            "signal_binary": decision_rule,
+        },
+        "data": {
+            "required_columns": ["datetime", "open", "high", "low", "close", "volume", "symbol"],
+        },
+        "timing": {
+            "available_at_rule": timing_rule,
+        },
+        "output": {
+            "file": "signal.csv",
+            "schema_version": "0.1.0",
+            "columns": SIGNAL_COLUMNS,
+        },
     }
 
 
@@ -213,7 +226,6 @@ def build_data_quality_report(
 
     return {
         "version": "1.0",
-        "exported_at": datetime.now().isoformat() + "Z",
         "generator": "SignalForge",
         "dataset_name": dataset_name,
         "source_type": source_type,
@@ -230,6 +242,84 @@ def build_data_quality_report(
                 "signal_binary_stats": signal_binary_stats,
             }
         ] if row_count > 0 else [],
+    }
+
+
+def build_market_data_quality_report(
+    market_data: pd.DataFrame,
+    dataset_name: str = "unknown",
+    source_type: str = "local_ohlcv_csv",
+) -> dict[str, Any]:
+    """Build market data quality report from normalized OHLCV data.
+
+    Args:
+        market_data: Normalized OHLCV market data DataFrame
+        dataset_name: Name/path of the dataset
+        source_type: Type of data source (default: local_ohlcv_csv)
+
+    Returns:
+        Quality report dictionary for source market data (deterministic - no volatile timestamps)
+    """
+    row_count = len(market_data)
+    symbols = market_data["symbol"].unique().tolist() if "symbol" in market_data.columns else []
+
+    datetime_col = market_data["datetime"] if "datetime" in market_data.columns else pd.Series(dtype="datetime64[ns, UTC]")
+    start_date = datetime_col.min().isoformat() if len(datetime_col) > 0 else None
+    end_date = datetime_col.max().isoformat() if len(datetime_col) > 0 else None
+
+    dup_cols = ["datetime", "symbol"]
+    duplicate_rows = int(market_data.duplicated(subset=dup_cols, keep=False).sum()) if all(c in market_data.columns for c in dup_cols) else 0
+
+    missing_values = {}
+    ohlcv_cols = ["open", "high", "low", "close", "volume"]
+    for col in ohlcv_cols:
+        if col in market_data.columns:
+            missing_values[col] = int(market_data[col].isnull().sum())
+        else:
+            missing_values[col] = 0
+
+    warnings = []
+    for col in ohlcv_cols:
+        if col in market_data.columns:
+            null_count = market_data[col].isnull().sum()
+            if null_count > 0:
+                warnings.append({
+                    "code": f"NULL_{col.upper()}",
+                    "message": f"Null values in {col}",
+                    "affected_rows": int(null_count),
+                })
+
+    if "high" in market_data.columns and "low" in market_data.columns:
+        violations = (market_data["high"] < market_data["low"]).sum()
+        if violations > 0:
+            warnings.append({
+                "code": "PRICE_INTEGRITY_VIOLATION",
+                "message": "high < low violations",
+                "affected_rows": int(violations),
+            })
+
+    if len(market_data) == 0:
+        warnings.append({
+            "code": "EMPTY_DATASET",
+            "message": "Market data is empty",
+            "affected_rows": 0,
+        })
+
+    warnings.sort(key=lambda w: w["code"])
+
+    return {
+        "version": "1.0",
+        "generator": "SignalForge",
+        "dataset_name": dataset_name,
+        "source_type": source_type,
+        "symbol_count": len(symbols),
+        "row_count": row_count,
+        "start_date": start_date,
+        "end_date": end_date,
+        "duplicate_rows": duplicate_rows,
+        "missing_values": missing_values,
+        "warnings": warnings,
+        "point_in_time_correctness_claimed": False,
     }
 
 
@@ -341,6 +431,8 @@ def export_alphaforge_compatibility_package(
         "schema_version": schema_version,
         "alpha_forge_strategy": alpha_forge_strategy,
         "expected_alpha_forge_execution_semantics": expected_alpha_forge_execution_semantics,
+        "contains_backtest_results": False,
+        "contains_performance_metrics": False,
     }
 
     readme_text = _build_alphaforge_compatibility_readme(
@@ -531,6 +623,10 @@ def _validate_alphaforge_compatibility_inputs(
     if signal_errors:
         raise ExportError("Invalid signal.csv:\n" + "\n".join(signal_errors))
 
+    alignment_errors = validate_signal_market_date_alignment(signal_df, market_data_df)
+    if alignment_errors:
+        raise ExportError("Invalid signal.csv date alignment:\n" + "\n".join(alignment_errors))
+
     required_market = ["open", "high", "low", "close"]
     for column in required_market:
         values = market_data_df[column]
@@ -668,9 +764,16 @@ def _validate_alphaforge_compatibility_package(
         "schema_version",
         "alpha_forge_strategy",
         "expected_alpha_forge_execution_semantics",
+        "contains_backtest_results",
+        "contains_performance_metrics",
     }
     if set(manifest_loaded) != expected_manifest_keys:
         raise ExportError("manifest.json must contain the required smoke-package keys")
+
+    if manifest_loaded["contains_backtest_results"] is not False:
+        raise ExportError("manifest.json contains_backtest_results must be False")
+    if manifest_loaded["contains_performance_metrics"] is not False:
+        raise ExportError("manifest.json contains_performance_metrics must be False")
 
     if contract_loaded["row_count"] != len(parsed_signal):
         raise ExportError("signal_contract.yaml row_count must match signal.csv row count")

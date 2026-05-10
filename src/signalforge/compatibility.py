@@ -59,6 +59,29 @@ def validate_signal_csv(df: pd.DataFrame) -> list[str]:
     return errors
 
 
+def validate_signal_market_date_alignment(
+    signal_df: pd.DataFrame,
+    market_df: pd.DataFrame,
+) -> list[str]:
+    """Validate that signal rows align one-to-one with market dates."""
+    errors = []
+
+    if "datetime" not in signal_df.columns:
+        errors.append("signal.csv missing datetime column")
+        return errors
+    if "datetime" not in market_df.columns:
+        errors.append("market data missing datetime column")
+        return errors
+
+    signal_dates = pd.to_datetime(signal_df["datetime"], utc=True).tolist()
+    market_dates = pd.to_datetime(market_df["datetime"], utc=True).tolist()
+
+    if signal_dates != market_dates:
+        errors.append("signal dates must exactly match selected OHLCV market dates")
+
+    return errors
+
+
 def validate_signal_contract_yaml(data: dict[str, Any]) -> list[str]:
     """Validate signal_contract.yaml schema.
 
@@ -70,13 +93,39 @@ def validate_signal_contract_yaml(data: dict[str, Any]) -> list[str]:
     """
     errors = []
 
-    required_keys = ["version", "exported_at", "generator", "signals"]
+    required_keys = [
+        "signal_name",
+        "source",
+        "version",
+        "exported_at",
+        "generator",
+        "signals",
+        "compatibility",
+    ]
     for key in required_keys:
         if key not in data:
             errors.append(f"Missing required key: {key}")
 
     if "generator" in data and data["generator"] != "SignalForge":
         errors.append(f"Expected generator 'SignalForge', got '{data['generator']}'")
+
+    if "compatibility" in data:
+        compatibility = data["compatibility"]
+        expected = {
+            "alphaforge_strategy": "custom_signal",
+            "execution_semantics": "legacy_close_to_close_lagged",
+            "target_position_rule": "target_position = float(signal_binary)",
+            "supports_shorting": False,
+            "supports_leverage": False,
+        }
+        if not isinstance(compatibility, dict):
+            errors.append("compatibility must be a dict")
+        else:
+            for key, value in expected.items():
+                if key not in compatibility:
+                    errors.append(f"Missing compatibility key: {key}")
+                elif compatibility[key] != value:
+                    errors.append(f"Unexpected compatibility value for {key}")
 
     if "signals" in data:
         if not isinstance(data["signals"], list):

@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from signalforge.factor_base import FactorProtocol
+from signalforge.factor_base import BaseAlphaFactor
 
 
 class UnknownFactorError(Exception):
@@ -21,9 +21,9 @@ class FactorRegistry:
     """Registry for factor registration and lookup."""
 
     def __init__(self) -> None:
-        self._factors: dict[str, FactorProtocol] = {}
+        self._factors: dict[str, BaseAlphaFactor] = {}
 
-    def register(self, factor: FactorProtocol) -> None:
+    def register(self, factor: BaseAlphaFactor) -> None:
         """Register a factor.
 
         Args:
@@ -36,7 +36,23 @@ class FactorRegistry:
             raise DuplicateFactorError(f"Factor '{factor.name}' already registered")
         self._factors[factor.name] = factor
 
-    def get(self, name: str) -> FactorProtocol:
+    def get(self, name: str) -> BaseAlphaFactor:
+        """Get a factor by name (legacy interface).
+
+        Args:
+            name: Factor name
+
+        Returns:
+            Registered factor
+
+        Raises:
+            UnknownFactorError: If factor not found
+        """
+        if name not in self._factors:
+            raise UnknownFactorError(f"Unknown factor: '{name}'")
+        return self._factors[name]
+
+    def get_factor(self, name: str) -> BaseAlphaFactor:
         """Get a factor by name.
 
         Args:
@@ -56,8 +72,37 @@ class FactorRegistry:
         """List all registered factor names."""
         return list(self._factors.keys())
 
+    def validate_factor_config(self, name: str, config: dict[str, Any]) -> bool:
+        """Validate factor configuration for a specific factor.
+
+        Args:
+            name: Factor name to validate
+            config: Factor configuration dict
+
+        Returns:
+            True if valid
+
+        Raises:
+            InvalidFactorConfigError: If config is invalid
+            UnknownFactorError: If factor not found
+        """
+        if name not in self._factors:
+            raise UnknownFactorError(f"Unknown factor: '{name}'")
+
+        factor = self._factors[name]
+        required = factor.required_inputs()
+
+        if not isinstance(config, dict):
+            raise InvalidFactorConfigError("Factor config must be a dictionary")
+
+        missing = [inp for inp in required if inp not in config]
+        if missing:
+            raise InvalidFactorConfigError(f"Missing required inputs for '{name}': {missing}")
+
+        return True
+
     def validate_config(self, config: dict[str, Any]) -> bool:
-        """Validate factor configuration.
+        """Validate factor configuration (legacy interface).
 
         Args:
             config: Factor configuration dict

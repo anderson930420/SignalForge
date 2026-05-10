@@ -144,6 +144,8 @@ def test_exports_alphaforge_compatibility_package(tmp_path: Path) -> None:
         manifest_json["expected_alpha_forge_execution_semantics"]
         == "legacy_close_to_close_lagged"
     )
+    assert manifest_json["contains_backtest_results"] is False
+    assert manifest_json["contains_performance_metrics"] is False
 
     assert "alphaforge research-validate --strategy custom_signal" in readme_text
     assert "market_data.csv" in readme_text

@@ -11,11 +11,7 @@ class TestE2EGenerateArtifacts:
     """End-to-end test for CLI artifact generation pipeline."""
 
     def test_e2e_generate_artifacts(self, tmp_path: Path) -> None:
-        """Test full pipeline from config to artifact generation.
-
-        This test generates a multi-row signal.csv that is demonstrably
-        consumable by AlphaForge custom_signal interface.
-        """
+        """Test full pipeline from config to artifact generation."""
         from signalforge.data_registry import local_ohlcv_csv
         from signalforge.factor_registry import FactorRegistry
         from signalforge.factors.moskowitz_momentum import MoskowitzMomentumFactor
@@ -25,7 +21,7 @@ class TestE2EGenerateArtifacts:
             export_signal_contract_yaml,
             export_data_quality_report,
             build_signal_contract,
-            build_data_quality_report,
+            build_market_data_quality_report,
         )
         from signalforge.schemas import SignalValidator
 
@@ -77,42 +73,36 @@ class TestE2EGenerateArtifacts:
         factor = registry.get(signal_name)
         factor_output = factor.calculate(data)
 
-        valid_mask = ~factor_output["factor_value"].isnull()
-        valid_factor_output = factor_output[valid_mask].reset_index(drop=True)
-        assert len(valid_factor_output) > 1, (
-            f"Need more than 1 valid signal row, got {len(valid_factor_output)}"
-        )
-
         composer = SignalComposer()
         composer.set_validator(SignalValidator())
 
-        signal_rows = []
-        for idx in range(len(valid_factor_output)):
-            row = valid_factor_output.iloc[idx]
-            row_datetime = data.iloc[idx]["datetime"] if idx < len(data) else filter_start
+        signal_df = composer.compose(
+            factor_output=factor_output,
+            datetime=data["datetime"],
+            available_at=data["datetime"],
+            symbol=symbol,
+            signal_name=signal_name,
+            source=source,
+        )
 
-            signal_row = composer.compose(
-                factor_output=pd.DataFrame([row]),
-                datetime=row_datetime,
-                available_at=row_datetime,
-                symbol=symbol,
-                signal_name=signal_name,
-                source=source,
-            )
-            signal_rows.append(signal_row)
+        assert len(signal_df) == len(data), (
+            f"signal.csv row count should match selected OHLCV data rows, got {len(signal_df)} vs {len(data)}"
+        )
+        assert signal_df["signal_binary"].isin([0, 1]).all(), "signal_binary contains non-binary values"
+        assert signal_df["signal_value"].isnull().any(), "warmup rows should preserve null signal_value"
+        assert (signal_df["signal_binary"] == 0).any(), "warmup rows should emit binary 0"
+        assert (signal_df["available_at"] <= signal_df["datetime"]).all(), "available_at > datetime violation found"
+        assert signal_df["datetime"].tolist() == data["datetime"].tolist(), "signal dates must match selected market dates"
+        assert not signal_df.duplicated(subset=["datetime", "symbol", "signal_name"]).any()
 
-        signal_df = pd.concat(signal_rows, ignore_index=True)
-
-        assert len(signal_df) > 1, f"Need more than 1 signal row, got {len(signal_df)}"
-
-        output_dir = tmp_path / "artifacts" / symbol / "20230101_20241231"
+        output_dir = tmp_path / "artifacts" / symbol / signal_name / "20230101_20241231"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         signal_value_stats = {
-            "min": float(valid_factor_output["factor_value"].min()),
-            "max": float(valid_factor_output["factor_value"].max()),
-            "mean": float(valid_factor_output["factor_value"].mean()),
-            "null_count": int(valid_factor_output["factor_value"].isnull().sum()),
+            "min": float(factor_output["factor_value"].min()) if not factor_output["factor_value"].isnull().all() else None,
+            "max": float(factor_output["factor_value"].max()) if not factor_output["factor_value"].isnull().all() else None,
+            "mean": float(factor_output["factor_value"].mean()) if not factor_output["factor_value"].isnull().all() else None,
+            "null_count": int(factor_output["factor_value"].isnull().sum()),
         }
 
         signal_binary_stats = {
@@ -133,12 +123,26 @@ class TestE2EGenerateArtifacts:
             row_count=len(signal_df),
             signal_value_stats=signal_value_stats,
             signal_binary_stats=signal_binary_stats,
+            symbol=symbol,
+            frequency="daily",
+            input_data={
+                "type": "local_ohlcv_csv",
+                "path": str(csv_path),
+                "required_columns": [
+                    "datetime",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                ],
+            },
         )
 
-        quality_report = build_data_quality_report(
-            signal_df=signal_df,
+        quality_report = build_market_data_quality_report(
+            market_data=data,
             dataset_name=str(csv_path),
-            source_type="csv",
+            source_type="local_ohlcv_csv",
         )
 
         export_signal_csv(signal_df, output_dir, validate=True)
@@ -166,7 +170,7 @@ class TestE2EGenerateArtifacts:
         assert list(result_df.columns) == required_columns, (
             f"Column mismatch: {list(result_df.columns)}"
         )
-        assert len(result_df) > 1, f"Need more than 1 row, got {len(result_df)}"
+        assert len(result_df) == len(data), f"Need {len(data)} rows, got {len(result_df)}"
 
         assert result_df["signal_binary"].isin([0, 1]).all(), (
             "signal_binary contains values other than 0 or 1"
@@ -184,56 +188,52 @@ class TestE2EGenerateArtifacts:
         )
         assert not dup_mask.any(), "Duplicate datetime-symbol-signal_name rows found"
 
-        contract_data = yaml.safe_load(open(signal_contract_path))
-        assert "signal_name" in contract_data, "signal_name missing"
-        assert "factor" in contract_data, "factor missing"
-        assert "decision_rule" in contract_data, "decision_rule missing"
-        assert "schema_version" in contract_data, "schema_version missing"
-        assert contract_data.get("output_file") == "signal.csv", (
-            f"output_file mismatch: {contract_data.get('output_file')}"
-        )
+        contract_data = yaml.safe_load(signal_contract_path.read_text(encoding="utf-8"))
+        assert contract_data["signal_name"] == signal_name
+        assert contract_data["source"] == source
+        assert contract_data["version"] == "0.1.0"
+        assert "factor" in contract_data
+        assert contract_data["factor"]["name"] == signal_name
+        assert contract_data["factor"]["version"] == "0.1.0"
+        assert "decision_rule" in contract_data
+        assert "signal_binary" in contract_data["decision_rule"]
+        assert "timing" in contract_data
+        assert "available_at_rule" in contract_data["timing"]
+        assert "output" in contract_data
+        assert contract_data["output"]["file"] == "signal.csv"
+        assert contract_data["output"]["schema_version"] == "0.1.0"
+        assert contract_data["output"]["columns"] == required_columns
 
-        quality_data = yaml.safe_load(open(quality_report_path))
-        assert quality_data.get("source_type") == "csv", (
+        quality_data = yaml.safe_load(quality_report_path.read_text(encoding="utf-8"))
+        assert quality_data.get("source_type") == "local_ohlcv_csv", (
             f"source_type mismatch: {quality_data.get('source_type')}"
         )
         assert quality_data.get("symbol_count") == 1, (
             f"symbol_count mismatch: {quality_data.get('symbol_count')}"
         )
-        assert quality_data.get("row_count") == len(result_df), (
-            f"row_count mismatch: expected {len(result_df)}, got {quality_data.get('row_count')}"
+        assert quality_data.get("row_count") == len(data), (
+            f"row_count mismatch: expected {len(data)}, got {quality_data.get('row_count')}"
         )
         assert "start_date" in quality_data, "start_date missing"
         assert "end_date" in quality_data, "end_date missing"
         assert "duplicate_rows" in quality_data, "duplicate_rows missing"
         assert "missing_values" in quality_data, "missing_values missing"
         assert "warnings" in quality_data, "warnings missing"
-
-        print("\n=== E2E Multi-Row Test Results ===")
-        print(f"Output directory: {output_dir}")
-        print(f"signal.csv rows: {len(result_df)}")
-        print(f"signal_contract.yaml keys: {list(contract_data.keys())}")
-        print(f"data_quality_report.json row_count: {quality_data.get('row_count')}")
-        print(f"signal_binary 0 count: {signal_binary_stats['value_0_count']}")
-        print(f"signal_binary 1 count: {signal_binary_stats['value_1_count']}")
-        print("=== E2E Multi-Row Test PASSED ===")
+        assert isinstance(quality_data.get("missing_values"), dict), "missing_values should be a dict"
+        assert quality_data.get("point_in_time_correctness_claimed") is False
 
     def test_e2e_alphaforge_contract_requirements(self, tmp_path: Path) -> None:
-        """Verify the generated signal.csv satisfies AlphaForge custom_signal contract.
+        """Verify the generated signal.csv satisfies AlphaForge custom_signal contract."""
+        self.test_e2e_generate_artifacts(tmp_path)
 
-        AlphaForge requires:
-        - signal.csv with exactly 7 columns in order
-        - signal_binary is 0 or 1
-        - available_at <= datetime
-        - No duplicate datetime-symbol-signal_name
-        - No missing signal_binary
-        - No non-binary signal_binary
-        - Every row has one decision timestamp
-        """
-        test_instance = TestE2EGenerateArtifacts()
-        test_instance.test_e2e_generate_artifacts(tmp_path)
-
-        result_df = pd.read_csv(tmp_path / "artifacts" / "AAPL" / "20230101_20241231" / "signal.csv")
+        result_df = pd.read_csv(
+            tmp_path
+            / "artifacts"
+            / "AAPL"
+            / "moskowitz_momentum"
+            / "20230101_20241231"
+            / "signal.csv"
+        )
 
         assert not result_df["signal_binary"].isnull().any(), (
             "signal_binary has missing values"
@@ -264,5 +264,3 @@ class TestE2EGenerateArtifacts:
         assert len(result_df) > 1, (
             "AlphaForge compatibility requires multiple rows"
         )
-
-        print("\n=== AlphaForge Contract Requirements: ALL SATISFIED ===")

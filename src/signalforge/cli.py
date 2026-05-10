@@ -7,15 +7,19 @@ import typer
 from signalforge.data_registry import local_ohlcv_csv
 from signalforge.factor_registry import FactorRegistry
 from signalforge.factors.moskowitz_momentum import MoskowitzMomentumFactor
-from signalforge.schemas import MissingColumnsError, SignalValidationError
+from signalforge.schemas import (
+    MissingColumnsError,
+    SignalValidationError,
+)
 from signalforge.signal_composer import SignalComposer
 from signalforge.export import (
     export_signal_csv,
     export_signal_contract_yaml,
     export_data_quality_report,
     build_signal_contract,
-    build_data_quality_report,
+    build_market_data_quality_report,
 )
+from signalforge.compatibility import validate_signal_market_date_alignment
 
 
 app = typer.Typer(help="SignalForge - Paper-derived factor and standardized signal generation layer")
@@ -73,13 +77,14 @@ def validate_config(config: dict) -> list[str]:
 def build_output_path(
     artifacts_dir: str,
     symbol: str,
+    signal_name: str,
     start_date: str,
     end_date: str,
 ) -> Path:
     """Build deterministic output path."""
-    start_clean = start_date.replace("-", "")
-    end_clean = end_date.replace("-", "")
-    return Path(artifacts_dir) / symbol / f"{start_clean}_{end_clean}"
+    start_clean = start_date.split("T")[0].replace("-", "")
+    end_clean = end_date.split("T")[0].replace("-", "")
+    return Path(artifacts_dir) / symbol / signal_name / f"{start_clean}_{end_clean}"
 
 
 def check_files_exist(output_dir: Path) -> list[Path]:
@@ -144,7 +149,8 @@ def generate(
     if "datetime" in data.columns:
         data = data[
             (data["datetime"] >= start_date) & (data["datetime"] <= end_date)
-        ]
+        ].copy()
+        data = data.sort_values("datetime").reset_index(drop=True)
 
     registry = FactorRegistry()
     registry.register(MoskowitzMomentumFactor())
@@ -156,28 +162,40 @@ def generate(
         raise typer.Exit(1)
 
     try:
-        factor_output = factor.calculate(data)
+        factor_output = factor.compute(data)
     except Exception as e:
         typer.echo(f"Error: Factor calculation failed: {e}", err=True)
         raise typer.Exit(1)
-
-    composer = SignalComposer()
-    composer.set_validator(SignalValidator())
 
     if len(factor_output) == 0:
         typer.echo("Error: Factor produced no output", err=True)
         raise typer.Exit(1)
 
-    first_row = factor_output.iloc[0]
-    first_datetime = data.iloc[0]["datetime"] if "datetime" in data.columns else first_row.get("datetime", start_date)
-    available_at = first_datetime
+    required_cols = {"datetime", "symbol", "factor_name", "factor_value", "available_at"}
+    if not required_cols.issubset(set(factor_output.columns)):
+        typer.echo("Error: Factor output must have columns: datetime, symbol, factor_name, factor_value, available_at", err=True)
+        raise typer.Exit(1)
+
+    if "target_position" in factor_output.columns or "signal_binary" in factor_output.columns:
+        typer.echo("Error: Factor output must not contain target_position or signal_binary", err=True)
+        raise typer.Exit(1)
+
+    valid_mask = ~factor_output["factor_value"].isnull()
+    factor_output = factor_output[valid_mask].reset_index(drop=True)
+
+    if len(factor_output) == 0:
+        typer.echo("Error: Factor produced no valid output (all rows have insufficient history)", err=True)
+        raise typer.Exit(1)
+
+    composer = SignalComposer()
+    composer.set_validator(SignalValidator())
 
     try:
         signal_df = composer.compose(
             factor_output=factor_output,
-            datetime=first_datetime,
-            available_at=available_at,
-            symbol=symbol,
+            datetime=factor_output["datetime"],
+            available_at=factor_output["available_at"],
+            symbol=factor_output["symbol"].iloc[0] if "symbol" in factor_output.columns else symbol,
             signal_name=signal_name,
             source=source,
         )
@@ -185,9 +203,17 @@ def generate(
         typer.echo(f"Error: Signal composition failed: {e}", err=True)
         raise typer.Exit(1)
 
+    alignment_errors = validate_signal_market_date_alignment(signal_df, factor_output)
+    if alignment_errors:
+        typer.echo("Error: Signal dates do not match selected market dates.", err=True)
+        for err in alignment_errors:
+            typer.echo(f"Error: {err}", err=True)
+        raise typer.Exit(1)
+
     output_dir = build_output_path(
         output_config["artifacts_dir"],
         symbol,
+        signal_name,
         start_date,
         end_date,
     )
@@ -223,19 +249,22 @@ def generate(
         source=source,
         factor_name=factor_name,
         parameters=cfg.get("factor_params", {}),
-        decision_rule="signal_binary = 1 if signal_value > 0 else 0",
-        timing_rule="available_at <= datetime",
+        decision_rule="1 if signal_value > 0 else 0",
+        timing_rule="same as datetime for OHLCV-only daily signal",
         symbols=[symbol],
         datetime_range=(start_date, end_date),
         row_count=len(signal_df),
         signal_value_stats=signal_value_stats,
         signal_binary_stats=signal_binary_stats,
+        symbol=symbol,
+        frequency="daily",
+        factor_version=factor.version,
     )
 
-    quality_report = build_data_quality_report(
-        signal_df=signal_df,
+    quality_report = build_market_data_quality_report(
+        market_data=data,
         dataset_name=data_path,
-        source_type="csv",
+        source_type="local_ohlcv_csv",
     )
 
     try:

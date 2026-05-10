@@ -4,6 +4,7 @@ import pandas as pd
 
 from signalforge.compatibility import (
     validate_signal_csv,
+    validate_signal_market_date_alignment,
     validate_signal_contract_yaml,
     validate_cross_artifacts,
 )
@@ -69,9 +70,18 @@ class TestValidateSignalCsv:
 class TestValidateSignalContractYaml:
     def test_validates_correct_contract(self):
         data = {
-            "version": "1.0",
+            "signal_name": "test",
+            "source": "test",
+            "version": "0.1.0",
             "exported_at": "2024-01-01T00:00:00Z",
             "generator": "SignalForge",
+            "compatibility": {
+                "alphaforge_strategy": "custom_signal",
+                "execution_semantics": "legacy_close_to_close_lagged",
+                "target_position_rule": "target_position = float(signal_binary)",
+                "supports_shorting": False,
+                "supports_leverage": False,
+            },
             "signals": [
                 {
                     "signal_name": "test",
@@ -95,14 +105,23 @@ class TestValidateSignalContractYaml:
 
         errors = validate_signal_contract_yaml(data)
 
-        assert any("version" in e for e in errors)
+        assert any("signal_name" in e for e in errors)
         assert any("generator" in e for e in errors)
 
     def test_detects_wrong_generator(self):
         data = {
-            "version": "1.0",
+            "signal_name": "test",
+            "source": "test",
+            "version": "0.1.0",
             "exported_at": "2024-01-01T00:00:00Z",
             "generator": "WrongGenerator",
+            "compatibility": {
+                "alphaforge_strategy": "custom_signal",
+                "execution_semantics": "legacy_close_to_close_lagged",
+                "target_position_rule": "target_position = float(signal_binary)",
+                "supports_shorting": False,
+                "supports_leverage": False,
+            },
             "signals": [],
         }
 
@@ -112,15 +131,42 @@ class TestValidateSignalContractYaml:
 
     def test_detects_empty_signals_list(self):
         data = {
-            "version": "1.0",
+            "signal_name": "test",
+            "source": "test",
+            "version": "0.1.0",
             "exported_at": "2024-01-01T00:00:00Z",
             "generator": "SignalForge",
+            "compatibility": {
+                "alphaforge_strategy": "custom_signal",
+                "execution_semantics": "legacy_close_to_close_lagged",
+                "target_position_rule": "target_position = float(signal_binary)",
+                "supports_shorting": False,
+                "supports_leverage": False,
+            },
             "signals": [],
         }
 
         errors = validate_signal_contract_yaml(data)
 
         assert any("non-empty" in e for e in errors)
+
+    def test_detects_missing_signal_date_alignment(self):
+        signal_df = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-02", periods=2, tz="UTC"),
+            "available_at": pd.date_range("2024-01-02", periods=2, tz="UTC"),
+            "symbol": ["AAPL", "AAPL"],
+            "signal_name": ["test", "test"],
+            "signal_value": [0.5, 0.6],
+            "signal_binary": [1, 1],
+            "source": ["test", "test"],
+        })
+        market_df = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-01", periods=2, tz="UTC"),
+        })
+
+        errors = validate_signal_market_date_alignment(signal_df, market_df)
+
+        assert len(errors) > 0
 
 
 class TestValidateCrossArtifacts:
