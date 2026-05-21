@@ -28,3 +28,28 @@ def test_signalforge_to_alphaforge_demo_doc_exists_with_required_sections() -> N
     ]
     for term in required_terms:
         assert term in content
+
+
+def test_signalforge_alphaforge_checkpoint_doc_exists_with_required_terms() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    checkpoint_path = (
+        repo_root
+        / "docs"
+        / "releases"
+        / "signalforge-alphaforge-e2e-checkpoint.md"
+    )
+
+    assert checkpoint_path.exists()
+
+    content = checkpoint_path.read_text(encoding="utf-8")
+    required_terms = [
+        "FIRST E2E DEMO PASSED",
+        "SignalForge",
+        "AlphaForge",
+        "signal.csv",
+        "custom_signal",
+        "no SignalForge runtime import",
+        "ruff check",
+    ]
+    for term in required_terms:
+        assert term in content
