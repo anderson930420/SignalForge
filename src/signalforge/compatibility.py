@@ -4,6 +4,8 @@ from typing import Any
 
 import pandas as pd
 
+from signalforge.schemas import SIGNAL_COLUMNS
+
 
 class CompatibilityError(Exception):
     pass
@@ -95,43 +97,61 @@ def validate_signal_contract_yaml(data: dict[str, Any]) -> list[str]:
 
     required_keys = [
         "signal_name",
-        "source",
         "version",
-        "exported_at",
-        "generator",
-        "signals",
-        "compatibility",
+        "source",
+        "factor",
+        "decision_rule",
+        "data",
+        "timing",
+        "output",
     ]
     for key in required_keys:
         if key not in data:
             errors.append(f"Missing required key: {key}")
 
-    if "generator" in data and data["generator"] != "SignalForge":
-        errors.append(f"Expected generator 'SignalForge', got '{data['generator']}'")
+    factor = data.get("factor")
+    if not isinstance(factor, dict):
+        errors.append("factor must be a dict")
+    else:
+        for key in ["name", "version", "parameters"]:
+            if key not in factor:
+                errors.append(f"Missing factor key: {key}")
 
-    if "compatibility" in data:
-        compatibility = data["compatibility"]
-        expected = {
-            "alphaforge_strategy": "custom_signal",
-            "execution_semantics": "legacy_close_to_close_lagged",
-            "target_position_rule": "target_position = float(signal_binary)",
-            "supports_shorting": False,
-            "supports_leverage": False,
-        }
-        if not isinstance(compatibility, dict):
-            errors.append("compatibility must be a dict")
+    decision_rule = data.get("decision_rule")
+    if not isinstance(decision_rule, dict):
+        errors.append("decision_rule must be a dict")
+    elif "signal_binary" not in decision_rule:
+        errors.append("Missing decision_rule key: signal_binary")
+
+    data_section = data.get("data")
+    if not isinstance(data_section, dict):
+        errors.append("data must be a dict")
+    else:
+        required_columns = data_section.get("required_columns")
+        expected_ohlcv_columns = ["datetime", "open", "high", "low", "close", "volume", "symbol"]
+        if not isinstance(required_columns, list):
+            errors.append("data.required_columns must be a list")
         else:
-            for key, value in expected.items():
-                if key not in compatibility:
-                    errors.append(f"Missing compatibility key: {key}")
-                elif compatibility[key] != value:
-                    errors.append(f"Unexpected compatibility value for {key}")
+            missing_columns = [col for col in expected_ohlcv_columns if col not in required_columns]
+            if missing_columns:
+                errors.append(f"data.required_columns missing required columns: {missing_columns}")
 
-    if "signals" in data:
-        if not isinstance(data["signals"], list):
-            errors.append("signals must be a list")
-        elif len(data["signals"]) == 0:
-            errors.append("signals must be non-empty")
+    timing = data.get("timing")
+    if not isinstance(timing, dict):
+        errors.append("timing must be a dict")
+    elif "available_at_rule" not in timing:
+        errors.append("Missing timing key: available_at_rule")
+
+    output = data.get("output")
+    if not isinstance(output, dict):
+        errors.append("output must be a dict")
+    else:
+        if output.get("file") != "signal.csv":
+            errors.append("output.file must equal signal.csv")
+        if output.get("schema_version") != "0.1.0":
+            errors.append("output.schema_version must equal 0.1.0")
+        if output.get("columns") != SIGNAL_COLUMNS:
+            errors.append(f"output.columns must equal {SIGNAL_COLUMNS}")
 
     return errors
 
@@ -151,16 +171,23 @@ def validate_cross_artifacts(
     """
     errors = []
 
-    if "signals" in contract_data and len(contract_data["signals"]) > 0:
-        for entry in contract_data["signals"]:
-            if "datetime_range" in entry:
-                dr = entry["datetime_range"]
-                if "start" in dr and "end" in dr:
-                    sig_min = signal_df["datetime"].min()
-                    sig_max = signal_df["datetime"].max()
-                    if pd.Timestamp(dr["start"]) > sig_min:
-                        errors.append("Contract datetime_range start mismatch")
-                    if pd.Timestamp(dr["end"]) < sig_max:
-                        errors.append("Contract datetime_range end mismatch")
+    output = contract_data.get("output")
+    contract_columns = output.get("columns") if isinstance(output, dict) else None
+    if contract_columns is None:
+        errors.append("Contract missing output.columns")
+    elif list(signal_df.columns) != contract_columns:
+        errors.append(f"signal.csv columns do not match contract output.columns: {contract_columns}")
+
+    contract_signal_name = contract_data.get("signal_name")
+    if contract_signal_name is not None and "signal_name" in signal_df.columns:
+        signal_names = set(signal_df["signal_name"].dropna().unique())
+        if signal_names != {contract_signal_name}:
+            errors.append("signal.csv signal_name values do not match contract signal_name")
+
+    contract_source = contract_data.get("source")
+    if contract_source is not None and "source" in signal_df.columns:
+        sources = set(signal_df["source"].dropna().unique())
+        if sources != {contract_source}:
+            errors.append("signal.csv source values do not match contract source")
 
     return errors
