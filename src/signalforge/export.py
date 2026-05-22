@@ -9,6 +9,7 @@ import pandas as pd
 import yaml
 
 from signalforge.compatibility import (
+    normalize_declared_daily_trading_date,
     validate_signal_csv,
     validate_signal_market_date_alignment,
 )
@@ -483,15 +484,15 @@ def _normalize_market_data(df: pd.DataFrame) -> pd.DataFrame:
         raise ExportError(f"Missing required market data columns: {missing}")
 
     normalized = normalized[OHLCV_COLUMNS].copy()
-    normalized["datetime"] = pd.to_datetime(normalized["datetime"], utc=True)
+    normalized["datetime"] = normalize_declared_daily_trading_date(normalized["datetime"])
     normalized = normalized.sort_values("datetime").reset_index(drop=True)
     return normalized
 
 
 def _normalize_signal_data(df: pd.DataFrame) -> pd.DataFrame:
     normalized = df.copy()
-    normalized["datetime"] = pd.to_datetime(normalized["datetime"], utc=True)
-    normalized["available_at"] = pd.to_datetime(normalized["available_at"], utc=True)
+    normalized["datetime"] = normalize_declared_daily_trading_date(normalized["datetime"])
+    normalized["available_at"] = normalize_declared_daily_trading_date(normalized["available_at"])
     normalized = normalized[SIGNAL_COLUMNS].copy()
     normalized = normalized.sort_values(
         by=["datetime", "symbol", "signal_name"],
@@ -501,7 +502,7 @@ def _normalize_signal_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _sorted_unique_dates(series: pd.Series) -> list[pd.Timestamp]:
-    dates = pd.Index(pd.to_datetime(series, utc=True).unique())
+    dates = pd.Index(normalize_declared_daily_trading_date(series).unique())
     return list(dates.sort_values())
 
 
@@ -719,9 +720,9 @@ def _validate_alphaforge_compatibility_package(
 
     parsed_signal = pd.read_csv(signal_csv_path)
     parsed_market = pd.read_csv(market_data_path)
-    parsed_signal["datetime"] = pd.to_datetime(parsed_signal["datetime"], utc=True)
-    parsed_signal["available_at"] = pd.to_datetime(parsed_signal["available_at"], utc=True)
-    parsed_market["datetime"] = pd.to_datetime(parsed_market["datetime"], utc=True)
+    parsed_signal["datetime"] = normalize_declared_daily_trading_date(parsed_signal["datetime"])
+    parsed_signal["available_at"] = normalize_declared_daily_trading_date(parsed_signal["available_at"])
+    parsed_market["datetime"] = normalize_declared_daily_trading_date(parsed_market["datetime"])
 
     if list(parsed_market.columns) != OHLCV_COLUMNS:
         raise ExportError("market_data.csv columns were not preserved")

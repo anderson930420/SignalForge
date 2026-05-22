@@ -9,10 +9,12 @@ import tomllib
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 
+from signalforge.compatibility import normalize_declared_daily_trading_date
 from signalforge.export import export_alphaforge_compatibility_package
-from signalforge.schemas import SIGNAL_COLUMNS
+from signalforge.schemas import ExportError, SIGNAL_COLUMNS
 
 
 PACKAGE_NAME = "AAPL_20230101_20241231"
@@ -120,9 +122,9 @@ def test_exports_alphaforge_compatibility_package(tmp_path: Path) -> None:
     assert (market_csv["low"] <= market_csv["close"]).all()
     assert not market_csv["volume"].isnull().any()
 
-    signal_csv["datetime"] = pd.to_datetime(signal_csv["datetime"], utc=True)
-    signal_csv["available_at"] = pd.to_datetime(signal_csv["available_at"], utc=True)
-    market_csv["datetime"] = pd.to_datetime(market_csv["datetime"], utc=True)
+    signal_csv["datetime"] = normalize_declared_daily_trading_date(signal_csv["datetime"])
+    signal_csv["available_at"] = normalize_declared_daily_trading_date(signal_csv["available_at"])
+    market_csv["datetime"] = normalize_declared_daily_trading_date(market_csv["datetime"])
 
     assert (signal_csv["available_at"] <= signal_csv["datetime"]).all()
     assert signal_csv["signal_binary"].isin([0, 1]).all()
@@ -204,6 +206,79 @@ def test_exports_alphaforge_compatibility_package(tmp_path: Path) -> None:
     dev_line = next(line for line in readme_text.splitlines() if line.startswith("- Development:"))
     holdout_line = next(line for line in readme_text.splitlines() if line.startswith("- Holdout:"))
     assert dev_line != holdout_line
+
+
+def test_package_builder_preserves_declared_dates_for_offset_timestamps(tmp_path: Path) -> None:
+    market_data = pd.DataFrame({
+        "datetime": [
+            "2025-01-02T00:00:00+08:00",
+            "2025-01-03T00:00:00+08:00",
+        ],
+        "open": [100.0, 101.0],
+        "high": [101.0, 102.0],
+        "low": [99.0, 100.0],
+        "close": [100.5, 101.5],
+        "volume": [1_000_000, 1_100_000],
+    })
+    signal_data = pd.DataFrame({
+        "datetime": [
+            "2025-01-02 09:30:00+08:00",
+            "2025-01-03 09:30:00+08:00",
+        ],
+        "available_at": [
+            "2025-01-02T00:00:00+08:00",
+            "2025-01-03T00:00:00+08:00",
+        ],
+        "symbol": ["AAPL", "AAPL"],
+        "signal_name": ["smoke_signal", "smoke_signal"],
+        "signal_value": [0.5, -0.5],
+        "signal_binary": [1, 0],
+        "source": ["smoke_source", "smoke_source"],
+    })
+
+    paths = export_alphaforge_compatibility_package(
+        market_data_df=market_data,
+        signal_df=signal_data,
+        output_dir=tmp_path / "package",
+    )
+
+    market_csv = pd.read_csv(paths["market_data.csv"])
+    signal_csv = pd.read_csv(paths["signal.csv"])
+
+    assert market_csv["datetime"].tolist() == ["2025-01-02", "2025-01-03"]
+    assert signal_csv["datetime"].tolist() == ["2025-01-02", "2025-01-03"]
+    assert signal_csv["available_at"].tolist() == ["2025-01-02", "2025-01-03"]
+
+    manifest_data = json.loads(paths["manifest.json"].read_text(encoding="utf-8"))
+    assert manifest_data["start_date"] == "2025-01-02"
+    assert manifest_data["end_date"] == "2025-01-03"
+
+
+def test_package_builder_rejects_later_declared_available_at(tmp_path: Path) -> None:
+    market_data = pd.DataFrame({
+        "datetime": ["2025-01-02", "2025-01-03"],
+        "open": [100.0, 101.0],
+        "high": [101.0, 102.0],
+        "low": [99.0, 100.0],
+        "close": [100.5, 101.5],
+        "volume": [1_000_000, 1_100_000],
+    })
+    signal_data = pd.DataFrame({
+        "datetime": ["2025-01-02", "2025-01-03"],
+        "available_at": ["2025-01-03", "2025-01-03"],
+        "symbol": ["AAPL", "AAPL"],
+        "signal_name": ["smoke_signal", "smoke_signal"],
+        "signal_value": [0.5, -0.5],
+        "signal_binary": [1, 0],
+        "source": ["smoke_source", "smoke_source"],
+    })
+
+    with pytest.raises(ExportError, match="available_at > datetime"):
+        export_alphaforge_compatibility_package(
+            market_data_df=market_data,
+            signal_df=signal_data,
+            output_dir=tmp_path / "package",
+        )
 
 
 def test_runtime_has_no_alphaforge_imports_or_dependency() -> None:

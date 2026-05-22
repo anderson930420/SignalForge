@@ -11,6 +11,33 @@ class CompatibilityError(Exception):
     pass
 
 
+def normalize_declared_daily_trading_date(values: pd.Series | Any) -> pd.Series | pd.Timestamp:
+    """Normalize daily datetime-like values by their declared calendar date.
+
+    Offset-aware values keep their written calendar date instead of being
+    converted through UTC before daily alignment.
+    """
+    if isinstance(values, pd.Series):
+        return values.apply(_normalize_declared_daily_trading_date_scalar)
+
+    return _normalize_declared_daily_trading_date_scalar(values)
+
+
+def _normalize_declared_daily_trading_date_scalar(value: Any) -> pd.Timestamp:
+    if pd.isna(value):
+        raise ValueError("Invalid declared daily trading date: null value")
+
+    try:
+        parsed = pd.Timestamp(value)
+    except Exception as exc:
+        raise ValueError(f"Invalid declared daily trading date: {value!r}") from exc
+
+    if pd.isna(parsed):
+        raise ValueError(f"Invalid declared daily trading date: {value!r}")
+
+    return pd.Timestamp(parsed.date())
+
+
 def validate_signal_csv(df: pd.DataFrame) -> list[str]:
     """Validate signal.csv schema.
 
@@ -43,10 +70,18 @@ def validate_signal_csv(df: pd.DataFrame) -> list[str]:
         if invalid_binary.any():
             errors.append("signal_binary contains values other than 0 or 1")
 
+    normalized_datetime = None
+    normalized_available_at = None
     if "available_at" in df.columns and "datetime" in df.columns:
-        violations = df["available_at"] > df["datetime"]
-        if violations.any():
-            errors.append("available_at > datetime violations found")
+        try:
+            normalized_datetime = normalize_declared_daily_trading_date(df["datetime"])
+            normalized_available_at = normalize_declared_daily_trading_date(df["available_at"])
+        except ValueError as exc:
+            errors.append(f"Invalid datetime or available_at value: {exc}")
+        else:
+            violations = normalized_available_at > normalized_datetime
+            if violations.any():
+                errors.append("available_at > datetime violations found")
 
     for col in ["datetime", "available_at", "symbol", "signal_name", "signal_binary", "source"]:
         if col in df.columns and df[col].isnull().any():
@@ -54,7 +89,10 @@ def validate_signal_csv(df: pd.DataFrame) -> list[str]:
 
     dup_cols = ["datetime", "symbol", "signal_name"]
     if all(c in df.columns for c in dup_cols):
-        duplicates = df.duplicated(subset=dup_cols, keep=False)
+        duplicate_df = df[dup_cols].copy()
+        if normalized_datetime is not None:
+            duplicate_df["datetime"] = normalized_datetime
+        duplicates = duplicate_df.duplicated(subset=dup_cols, keep=False)
         if duplicates.any():
             errors.append("Duplicate datetime-symbol-signal_name rows found")
 
@@ -75,8 +113,12 @@ def validate_signal_market_date_alignment(
         errors.append("market data missing datetime column")
         return errors
 
-    signal_dates = pd.to_datetime(signal_df["datetime"], utc=True).tolist()
-    market_dates = pd.to_datetime(market_df["datetime"], utc=True).tolist()
+    try:
+        signal_dates = normalize_declared_daily_trading_date(signal_df["datetime"]).tolist()
+        market_dates = normalize_declared_daily_trading_date(market_df["datetime"]).tolist()
+    except ValueError as exc:
+        errors.append(f"Invalid datetime value for date alignment: {exc}")
+        return errors
 
     if signal_dates != market_dates:
         errors.append("signal dates must exactly match selected OHLCV market dates")

@@ -1,8 +1,10 @@
 """Tests for alphaforge_compatibility module."""
 
 import pandas as pd
+import pytest
 
 from signalforge.compatibility import (
+    normalize_declared_daily_trading_date,
     validate_signal_csv,
     validate_signal_market_date_alignment,
     validate_signal_contract_yaml,
@@ -107,6 +109,103 @@ class TestValidateSignalCsv:
         errors = validate_signal_csv(df)
 
         assert any("available_at > datetime" in e for e in errors)
+
+    def test_available_at_same_declared_date_passes_for_offset_timestamps(self):
+        df = pd.DataFrame({
+            "datetime": ["2025-01-02T00:00:00+08:00"],
+            "available_at": ["2025-01-02 09:30:00+08:00"],
+            "symbol": ["AAPL"],
+            "signal_name": ["test"],
+            "signal_value": [0.5],
+            "signal_binary": [1],
+            "source": ["test"],
+        })
+
+        errors = validate_signal_csv(df)
+
+        assert errors == []
+
+    def test_available_at_later_declared_date_fails_for_offset_timestamps(self):
+        df = pd.DataFrame({
+            "datetime": ["2025-01-02T23:30:00+08:00"],
+            "available_at": ["2025-01-03T00:00:00+08:00"],
+            "symbol": ["AAPL"],
+            "signal_name": ["test"],
+            "signal_value": [0.5],
+            "signal_binary": [1],
+            "source": ["test"],
+        })
+
+        errors = validate_signal_csv(df)
+
+        assert any("available_at > datetime" in e for e in errors)
+
+    def test_reports_unparseable_datetime_value(self):
+        df = pd.DataFrame({
+            "datetime": ["not-a-date"],
+            "available_at": ["2025-01-02"],
+            "symbol": ["AAPL"],
+            "signal_name": ["test"],
+            "signal_value": [0.5],
+            "signal_binary": [1],
+            "source": ["test"],
+        })
+
+        errors = validate_signal_csv(df)
+
+        assert any("Invalid datetime or available_at value" in e for e in errors)
+
+
+class TestDeclaredDailyTradingDateNormalization:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("2025-01-02", pd.Timestamp("2025-01-02")),
+            ("2025-01-02T00:00:00Z", pd.Timestamp("2025-01-02")),
+            ("2025-01-02T00:00:00+08:00", pd.Timestamp("2025-01-02")),
+            ("2025-01-02 09:30:00+08:00", pd.Timestamp("2025-01-02")),
+        ],
+    )
+    def test_preserves_declared_calendar_date(self, value, expected):
+        assert normalize_declared_daily_trading_date(value) == expected
+
+    def test_raises_clear_value_error_for_unparseable_value(self):
+        with pytest.raises(ValueError, match="Invalid declared daily trading date"):
+            normalize_declared_daily_trading_date("not-a-date")
+
+
+class TestValidateSignalMarketDateAlignment:
+    @pytest.mark.parametrize(
+        "signal_datetime",
+        [
+            "2025-01-02T00:00:00+08:00",
+            "2025-01-02T00:00:00Z",
+            "2025-01-02 09:30:00+08:00",
+        ],
+    )
+    def test_accepts_matching_declared_dates_for_offset_timestamps(self, signal_datetime):
+        signal_df = pd.DataFrame({"datetime": [signal_datetime]})
+        market_df = pd.DataFrame({"datetime": ["2025-01-02"]})
+
+        errors = validate_signal_market_date_alignment(signal_df, market_df)
+
+        assert errors == []
+
+    def test_fails_when_declared_dates_differ(self):
+        signal_df = pd.DataFrame({"datetime": ["2025-01-03T00:00:00+08:00"]})
+        market_df = pd.DataFrame({"datetime": ["2025-01-02"]})
+
+        errors = validate_signal_market_date_alignment(signal_df, market_df)
+
+        assert any("signal dates must exactly match" in e for e in errors)
+
+    def test_reports_unparseable_datetime_value(self):
+        signal_df = pd.DataFrame({"datetime": ["not-a-date"]})
+        market_df = pd.DataFrame({"datetime": ["2025-01-02"]})
+
+        errors = validate_signal_market_date_alignment(signal_df, market_df)
+
+        assert any("Invalid datetime value for date alignment" in e for e in errors)
 
 
 class TestValidateSignalContractYaml:
