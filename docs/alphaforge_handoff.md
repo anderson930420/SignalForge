@@ -36,10 +36,22 @@ AlphaForge expects:
 
 1. **Required columns exist** - All 7 columns must be present
 2. **Datetime is parseable** - ISO 8601 format recommended
-3. **available_at <= datetime** - Signal must be available before or at the signal date
+3. **available_at <= datetime** - Signal must be available before or at the signal date at daily-date level
 4. **signal_binary in {0, 1}** - Binary signal only
 5. **Symbol is present** - Ticker symbol populated
 6. **No duplicate rows** - Each (datetime, symbol, signal_name) tuple is unique
+
+---
+
+## Daily datetime policy
+
+SignalForge MVP daily OHLCV signal handoff uses daily trading-date alignment.
+
+For `signal.csv`, `datetime` and `available_at` should be interpreted as declared daily trading-date labels. In the OHLCV-only MVP, `available_at` is the same declared trading date as `datetime`.
+
+AlphaForge should align daily signals by the declared trading date and should not UTC-shift the declared date for daily alignment. For example, `2025-01-02T00:00:00+08:00` should align as trading date `2025-01-02`.
+
+This handoff policy does not support intraday event-time validation. SignalForge does not claim point-in-time correctness for non-OHLCV data in MVP.
 
 ---
 

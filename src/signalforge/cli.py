@@ -250,7 +250,7 @@ def generate(
         factor_name=factor_name,
         parameters=cfg.get("factor_params", {}),
         decision_rule="1 if signal_value > 0 else 0",
-        timing_rule="same as datetime for OHLCV-only daily signal",
+        timing_rule="same declared daily trading date as datetime for OHLCV-only daily signal",
         symbols=[symbol],
         datetime_range=(start_date, end_date),
         row_count=len(signal_df),

@@ -157,7 +157,9 @@ def test_exports_alphaforge_compatibility_package(tmp_path: Path) -> None:
     assert contract_data["decision_rule"] == {
         "signal_binary": "signal_binary = 1 if signal_value > 0 else 0",
     }
-    assert contract_data["timing"] == {"available_at_rule": "available_at <= datetime"}
+    assert contract_data["timing"] == {
+        "available_at_rule": "same declared daily trading date as datetime for OHLCV-only daily signal",
+    }
     assert contract_data["output"]["file"] == "signal.csv"
     assert contract_data["output"]["columns"] == SIGNAL_COLUMNS
 

@@ -38,7 +38,7 @@ def canonical_contract() -> dict:
             "required_columns": ["datetime", "open", "high", "low", "close", "volume", "symbol"],
         },
         "timing": {
-            "available_at_rule": "same as datetime for OHLCV-only daily signal",
+            "available_at_rule": "same declared daily trading date as datetime for OHLCV-only daily signal",
         },
         "output": {
             "file": "signal.csv",

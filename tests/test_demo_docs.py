@@ -50,6 +50,8 @@ def test_signalforge_to_alphaforge_demo_doc_exists_with_required_sections() -> N
         "AlphaForge does not compute SignalForge factors",
         "AlphaForge does not import SignalForge runtime",
         "signal_value is ignored for execution",
+        "Daily signal rows align by declared trading date",
+        "No intraday timing semantics",
         "Known Limitations",
     ]
     for term in required_terms:

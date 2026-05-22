@@ -20,6 +20,11 @@ def test_readme_contains_key_sections():
 
     assert "datetime" in content and "available_at" in content and "signal_binary" in content, \
         "README must document signal.csv columns"
+    assert "daily trading-date label" in content, \
+        "README must document daily trading-date label semantics"
+    assert "Offset timestamps should be treated by declared trading date" in content or \
+        "not by UTC-shifted instant time" in content, \
+        "README must document offset timestamp daily alignment"
 
     assert "python -m pytest" in content, "README must document pytest command"
     assert "ruff check" in content, "README must document ruff check"
@@ -42,3 +47,7 @@ def test_handoff_doc_contains_key_sections():
         "handoff doc must state SignalForge does not run backtests"
     assert "available_at <=" in content, \
         "handoff doc must document available_at <= datetime rule"
+    assert "Daily datetime policy" in content, \
+        "handoff doc must document daily datetime policy"
+    assert "should not UTC-shift the declared date" in content, \
+        "handoff doc must document no UTC-shift daily alignment"

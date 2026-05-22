@@ -336,7 +336,7 @@ def export_alphaforge_compatibility_package(
     factor_name: str | None = None,
     factor_params: dict[str, Any] | None = None,
     decision_rule: str = "signal_binary = 1 if signal_value > 0 else 0",
-    timing_rule: str = "available_at <= datetime",
+    timing_rule: str = "same declared daily trading date as datetime for OHLCV-only daily signal",
     schema_version: str = "1.0",
     alpha_forge_strategy: str = "custom_signal",
     expected_alpha_forge_execution_semantics: str = "legacy_close_to_close_lagged",

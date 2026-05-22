@@ -117,7 +117,7 @@ class TestE2EGenerateArtifacts:
             factor_name=signal_name,
             parameters={},
             decision_rule="signal_binary = 1 if signal_value > 0 else 0",
-            timing_rule="available_at <= datetime",
+            timing_rule="same declared daily trading date as datetime for OHLCV-only daily signal",
             symbols=[symbol],
             datetime_range=(filter_start, filter_end),
             row_count=len(signal_df),

@@ -236,7 +236,7 @@ class TestCliIntegration:
             factor_name="moskowitz_momentum",
             parameters={},
             decision_rule="1 if signal_value > 0 else 0",
-            timing_rule="same as datetime for OHLCV-only daily signal",
+            timing_rule="same declared daily trading date as datetime for OHLCV-only daily signal",
             symbols=["AAPL"],
             datetime_range=("2023-01-01", "2023-12-31"),
             row_count=len(signal_df),

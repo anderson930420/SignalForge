@@ -98,6 +98,7 @@ Dirty repositories are recorded but do not fail the demo by default. `--require-
 The demo script checks:
 
 - `signal.csv` schema validation passes through AlphaForge `custom_signal`.
+- Daily signal rows align by declared trading date.
 - `signal_binary` maps to AlphaForge `target_position`.
 - Missing signal dates default to flat positions.
 - Extra signal dates fail validation.
@@ -148,3 +149,4 @@ Last verified for the sibling AlphaForge repository on 2026-05-22:
 - No live trading or broker execution.
 - No AlphaForge-side factor calculation.
 - No SignalForge-side performance search or holdout evaluation.
+- No intraday timing semantics or event-time availability validation.

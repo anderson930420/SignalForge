@@ -81,7 +81,7 @@ SignalForge accepts local OHLCV CSV files with the following required columns:
 
 | Column   | Description |
 |----------|-------------|
-| datetime | Timestamp (ISO 8601 recommended) |
+| datetime | Declared daily trading-date label for MVP OHLCV signals (ISO 8601 recommended) |
 | open     | Opening price |
 | high     | Highest price |
 | low      | Lowest price |
@@ -111,11 +111,17 @@ datetime, available_at, symbol, signal_name, signal_value, signal_binary, source
 ```
 
 **Rules:**
-- `available_at <= datetime` always
+- For MVP daily OHLCV signals, `datetime` is a declared daily trading-date label
+- For MVP daily OHLCV signals, `available_at` is also a declared daily trading-date label
+- In the OHLCV-only MVP, `available_at` is the same declared trading date as `datetime`
+- `available_at <= datetime` is evaluated at daily-date level in MVP
 - `signal_binary` contains only 0 or 1
 - `signal_binary = 1 if signal_value > 0 else 0`
 - Rows sorted deterministically by `datetime, symbol, signal_name`
 - No duplicate `(datetime, symbol, signal_name)` rows
+
+**Daily datetime policy:**
+SignalForge MVP daily OHLCV artifacts use declared trading-date labels, not intraday event-time availability. SignalForge does not provide intraday timing validation and does not claim point-in-time correctness for non-OHLCV data in MVP. Downstream consumers should align daily signals by declared trading date, not by UTC-shifted instant time. For example, `2025-01-02T00:00:00+08:00` is interpreted as trading date `2025-01-02` for daily-signal alignment.
 
 **Insufficient-history rows:**
 Rows where the factor cannot compute a valid value (e.g., warmup period) are dropped before export.
@@ -145,7 +151,7 @@ data:
     - volume
     - symbol
 timing:
-  available_at_rule: "same as datetime for OHLCV-only daily signal"
+  available_at_rule: "same declared daily trading date as datetime for OHLCV-only daily signal"
 output:
   file: signal.csv
   schema_version: 0.1.0
