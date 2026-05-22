@@ -12,6 +12,7 @@ import pandas as pd
 import yaml
 
 from signalforge.export import export_alphaforge_compatibility_package
+from signalforge.schemas import SIGNAL_COLUMNS
 
 
 PACKAGE_NAME = "AAPL_20230101_20241231"
@@ -136,8 +137,53 @@ def test_exports_alphaforge_compatibility_package(tmp_path: Path) -> None:
     report_json = json.loads(report_data)
     manifest_json = json.loads(manifest_data)
 
-    assert contract_data["row_count"] == len(signal_csv)
+    assert set(contract_data) == {
+        "signal_name",
+        "version",
+        "source",
+        "factor",
+        "decision_rule",
+        "data",
+        "timing",
+        "output",
+    }
+    assert contract_data["signal_name"] == "smoke_signal"
+    assert contract_data["source"] == "smoke_source"
+    assert contract_data["factor"] == {
+        "name": "smoke_factor",
+        "version": "0.1.0",
+        "parameters": {"lookback_days": 21, "skip_days": 1},
+    }
+    assert contract_data["decision_rule"] == {
+        "signal_binary": "signal_binary = 1 if signal_value > 0 else 0",
+    }
+    assert contract_data["timing"] == {"available_at_rule": "available_at <= datetime"}
+    assert contract_data["output"]["file"] == "signal.csv"
+    assert contract_data["output"]["columns"] == SIGNAL_COLUMNS
+
+    assert set(report_json) == {
+        "version",
+        "generator",
+        "dataset_name",
+        "source_type",
+        "symbol_count",
+        "row_count",
+        "start_date",
+        "end_date",
+        "duplicate_rows",
+        "missing_values",
+        "warnings",
+        "point_in_time_correctness_claimed",
+    }
     assert report_json["row_count"] == len(signal_csv)
+    assert report_json["missing_values"] == {
+        "open": 0,
+        "high": 0,
+        "low": 0,
+        "close": 0,
+        "volume": 0,
+    }
+    assert report_json["point_in_time_correctness_claimed"] is False
     assert manifest_json["row_count"] == len(signal_csv)
     assert manifest_json["alpha_forge_strategy"] == "custom_signal"
     assert (
@@ -156,9 +202,6 @@ def test_exports_alphaforge_compatibility_package(tmp_path: Path) -> None:
     dev_line = next(line for line in readme_text.splitlines() if line.startswith("- Development:"))
     holdout_line = next(line for line in readme_text.splitlines() if line.startswith("- Holdout:"))
     assert dev_line != holdout_line
-
-    contract_dates = pd.to_datetime([contract_data["datetime_start"], contract_data["datetime_end"]], utc=True)
-    assert contract_dates[0] <= contract_dates[1]
 
 
 def test_runtime_has_no_alphaforge_imports_or_dependency() -> None:

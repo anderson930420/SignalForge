@@ -387,33 +387,32 @@ def export_alphaforge_compatibility_package(
     factor_params_value = factor_params or {}
     package_label = generated_for or output_dir.name
 
-    contract_data = {
-        "signal_name": signal_name_value,
-        "source": source_value,
-        "factor": factor_name_value,
-        "factor_params": factor_params_value,
-        "decision_rule": decision_rule,
-        "timing_rule": timing_rule,
-        "schema_version": schema_version,
-        "output_file": "signal.csv",
-        "row_count": len(signals),
-        "symbol": symbol,
-        "datetime_start": start_date,
-        "datetime_end": end_date,
-        "generator": "SignalForge",
-    }
+    signal_value_stats = _signal_value_stats(signals)
+    signal_binary_stats = _signal_binary_stats(signals)
 
-    data_quality_report = {
-        "source_type": "local_ohlcv_csv",
-        "symbol_count": int(signals["symbol"].nunique()),
-        "row_count": len(signals),
-        "start_date": start_date,
-        "end_date": end_date,
-        "duplicate_rows": 0,
-        "missing_values": int(market_data.isnull().sum().sum() + signals.isnull().sum().sum()),
-        "warnings": [],
-        "generator": "SignalForge",
-    }
+    contract_data = build_signal_contract(
+        signal_name=signal_name_value,
+        source=source_value,
+        factor_name=factor_name_value,
+        parameters=factor_params_value,
+        decision_rule=decision_rule,
+        timing_rule=timing_rule,
+        symbols=[symbol],
+        datetime_range=(start_date, end_date),
+        row_count=len(signals),
+        signal_value_stats=signal_value_stats,
+        signal_binary_stats=signal_binary_stats,
+        symbol=symbol,
+        version=schema_version,
+    )
+
+    market_data_for_report = market_data.copy()
+    market_data_for_report["symbol"] = symbol
+    data_quality_report = build_market_data_quality_report(
+        market_data=market_data_for_report,
+        dataset_name="market_data.csv",
+        source_type="local_ohlcv_csv",
+    )
 
     manifest_data = {
         "package_name": package_name,
@@ -511,6 +510,26 @@ def _single_unique_value(df: pd.DataFrame, column: str) -> Any:
     if len(unique_values) != 1:
         raise ExportError(f"Expected exactly one unique value for {column}, got {len(unique_values)}")
     return unique_values[0]
+
+
+def _signal_value_stats(signal_df: pd.DataFrame) -> dict[str, float | int | None]:
+    values = signal_df["signal_value"]
+    all_null = values.isnull().all()
+    return {
+        "min": float(values.min()) if not all_null else None,
+        "max": float(values.max()) if not all_null else None,
+        "mean": float(values.mean()) if not all_null else None,
+        "null_count": int(values.isnull().sum()),
+    }
+
+
+def _signal_binary_stats(signal_df: pd.DataFrame) -> dict[str, int]:
+    values = signal_df["signal_binary"]
+    return {
+        "value_0_count": int((values == 0).sum()),
+        "value_1_count": int((values == 1).sum()),
+        "null_count": int(values.isnull().sum()),
+    }
 
 
 def _export_market_data_csv(df: pd.DataFrame, output_dir: Path) -> Path:
@@ -718,23 +737,32 @@ def _validate_alphaforge_compatibility_package(
 
     expected_contract_keys = {
         "signal_name",
+        "version",
         "source",
         "factor",
-        "factor_params",
         "decision_rule",
-        "timing_rule",
-        "schema_version",
-        "output_file",
-        "row_count",
-        "symbol",
-        "datetime_start",
-        "datetime_end",
-        "generator",
+        "data",
+        "timing",
+        "output",
     }
     if set(contract_loaded) != expected_contract_keys:
-        raise ExportError("signal_contract.yaml must contain the required smoke-package keys")
+        raise ExportError("signal_contract.yaml must contain the canonical contract keys")
+
+    if set(contract_loaded["factor"]) != {"name", "version", "parameters"}:
+        raise ExportError("signal_contract.yaml factor must use canonical nested fields")
+    if set(contract_loaded["decision_rule"]) != {"signal_binary"}:
+        raise ExportError("signal_contract.yaml decision_rule must use canonical nested fields")
+    if set(contract_loaded["timing"]) != {"available_at_rule"}:
+        raise ExportError("signal_contract.yaml timing must use canonical nested fields")
+    if set(contract_loaded["output"]) != {"file", "schema_version", "columns"}:
+        raise ExportError("signal_contract.yaml output must use canonical nested fields")
+    if contract_loaded["output"]["columns"] != SIGNAL_COLUMNS:
+        raise ExportError("signal_contract.yaml output.columns must match signal.csv columns")
 
     expected_report_keys = {
+        "version",
+        "generator",
+        "dataset_name",
         "source_type",
         "symbol_count",
         "row_count",
@@ -743,10 +771,14 @@ def _validate_alphaforge_compatibility_package(
         "duplicate_rows",
         "missing_values",
         "warnings",
-        "generator",
+        "point_in_time_correctness_claimed",
     }
     if set(report_loaded) != expected_report_keys:
-        raise ExportError("data_quality_report.json must contain the required smoke-package keys")
+        raise ExportError("data_quality_report.json must contain the canonical market-data report keys")
+    if set(report_loaded["missing_values"]) != {"open", "high", "low", "close", "volume"}:
+        raise ExportError("data_quality_report.json missing_values must be keyed by OHLCV column")
+    if report_loaded["point_in_time_correctness_claimed"] is not False:
+        raise ExportError("data_quality_report.json point_in_time_correctness_claimed must be False")
 
     expected_manifest_keys = {
         "package_name",
@@ -775,10 +807,8 @@ def _validate_alphaforge_compatibility_package(
     if manifest_loaded["contains_performance_metrics"] is not False:
         raise ExportError("manifest.json contains_performance_metrics must be False")
 
-    if contract_loaded["row_count"] != len(parsed_signal):
-        raise ExportError("signal_contract.yaml row_count must match signal.csv row count")
     if report_loaded["row_count"] != len(parsed_signal):
-        raise ExportError("data_quality_report.json row_count must match signal.csv row count")
+        raise ExportError("data_quality_report.json row_count must match market/signal row count")
     if manifest_loaded["row_count"] != len(parsed_signal):
         raise ExportError("manifest.json row_count must match signal.csv row count")
     if manifest_loaded["alpha_forge_strategy"] != "custom_signal":
@@ -792,8 +822,6 @@ def _validate_alphaforge_compatibility_package(
     if "market_data.csv" not in readme_text or "signal.csv" not in readme_text:
         raise ExportError("README.md must reference market_data.csv and signal.csv")
 
-    if contract_loaded["generator"] != "SignalForge":
-        raise ExportError("signal_contract.yaml generator must be SignalForge")
     if report_loaded["generator"] != "SignalForge":
         raise ExportError("data_quality_report.json generator must be SignalForge")
     if manifest_loaded["generator"] != "SignalForge":
