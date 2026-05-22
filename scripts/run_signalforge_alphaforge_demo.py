@@ -41,6 +41,11 @@ def main() -> None:
         help="Demo working directory. Defaults under ignored artifacts/.",
     )
     parser.add_argument("--keep-existing", action="store_true", help="Do not clear the demo working directory first.")
+    parser.add_argument(
+        "--require-clean-repos",
+        action="store_true",
+        help="Fail before running if either SignalForge or AlphaForge has dirty git status.",
+    )
     args = parser.parse_args()
 
     signalforge_repo = Path(__file__).resolve().parents[1]
@@ -49,6 +54,12 @@ def main() -> None:
 
     if not alphaforge_repo.exists():
         raise SystemExit(f"AlphaForge repository not found: {alphaforge_repo}")
+
+    signalforge_git = read_git_metadata(signalforge_repo)
+    alphaforge_git = read_git_metadata(alphaforge_repo)
+    if args.require_clean_repos:
+        require_clean_repos(signalforge_git, alphaforge_git)
+
     if not args.keep_existing and work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -150,6 +161,12 @@ def main() -> None:
         raise SystemExit("AlphaForge did not generate output artifacts")
 
     summary = {
+        "signalforge_repo": signalforge_git["repo"],
+        "signalforge_head": signalforge_git["head"],
+        "signalforge_dirty": signalforge_git["dirty"],
+        "alphaforge_repo": alphaforge_git["repo"],
+        "alphaforge_head": alphaforge_git["head"],
+        "alphaforge_dirty": alphaforge_git["dirty"],
         "signalforge_command": signalforge_command,
         "alphaforge_command": alphaforge_command,
         "generated_signalforge_artifacts": [
@@ -168,6 +185,37 @@ def main() -> None:
         "signalforge_runtime_imported_by_alphaforge": custom_signal_checks["signalforge_runtime_imported"],
     }
     print(json.dumps(summary, indent=2))
+
+
+def read_git_metadata(repo: Path) -> dict[str, object]:
+    resolved_repo = repo.resolve()
+    head = run_git_text(["rev-parse", "HEAD"], cwd=resolved_repo)
+    status_short = run_git_text(["status", "--short"], cwd=resolved_repo)
+    return {
+        "repo": str(resolved_repo),
+        "head": head,
+        "dirty": bool(status_short),
+    }
+
+
+def run_git_text(args: list[str], *, cwd: Path) -> str:
+    command = ["git", *args]
+    result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        raise SystemExit(
+            "Git command failed:\n"
+            f"cwd: {cwd}\n"
+            f"command: {' '.join(command)}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+    return result.stdout.strip()
+
+
+def require_clean_repos(*metadata_items: dict[str, object]) -> None:
+    dirty_repos = [str(metadata["repo"]) for metadata in metadata_items if metadata["dirty"]]
+    if dirty_repos:
+        raise SystemExit(f"Dirty repository status is not allowed with --require-clean-repos: {dirty_repos}")
 
 
 def build_demo_market_data() -> pd.DataFrame:

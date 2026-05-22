@@ -18,6 +18,12 @@ Run the automated demo from the SignalForge repository:
 python3 scripts/run_signalforge_alphaforge_demo.py
 ```
 
+For release or checkpoint runs that require exact clean repository pins, add:
+
+```bash
+python3 scripts/run_signalforge_alphaforge_demo.py --require-clean-repos
+```
+
 The script creates a deterministic OHLCV CSV at:
 
 ```text
@@ -73,6 +79,19 @@ artifacts/signalforge_to_alphaforge_e2e/alphaforge/signalforge_to_alphaforge_e2e
 ```
 
 Expected files include development signal outputs, walk-forward outputs, final-holdout outputs, and the persisted research protocol summary.
+
+## Summary Metadata
+
+The printed JSON summary includes repository commit metadata for audit and reproduction:
+
+- `signalforge_repo`: resolved SignalForge repository path.
+- `signalforge_head`: SignalForge `git rev-parse HEAD` commit.
+- `signalforge_dirty`: whether SignalForge `git status --short` had output.
+- `alphaforge_repo`: resolved AlphaForge repository path.
+- `alphaforge_head`: AlphaForge `git rev-parse HEAD` commit.
+- `alphaforge_dirty`: whether AlphaForge `git status --short` had output.
+
+Dirty repositories are recorded but do not fail the demo by default. `--require-clean-repos` fails before the cross-repository workflow when either repository is dirty.
 
 ## Validation Results
 

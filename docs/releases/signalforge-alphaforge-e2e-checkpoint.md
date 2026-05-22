@@ -18,6 +18,8 @@ This checkpoint covers:
 
 This checkpoint does not expand runtime scope, artifact schemas, factor coverage, or execution semantics.
 
+The demo summary now records commit metadata for both repositories: resolved repository paths, `git rev-parse HEAD` commits, and dirty-worktree booleans. Release checkpoint runs should use `--require-clean-repos` when clean pinned SignalForge and AlphaForge commits are required.
+
 ## SignalForge Command Used
 
 The demo was run from the SignalForge repository with:
