@@ -14,6 +14,20 @@ FACTOR_OUTPUT_COLUMNS = [
 ]
 
 
+def require_columns(
+    data: pd.DataFrame,
+    required_inputs: tuple[str, ...],
+    factor_name: str,
+) -> None:
+    """Raise a clear error when factor input columns are missing."""
+    missing = [column for column in required_inputs if column not in data.columns]
+    if missing:
+        raise ValueError(
+            f"Missing required input columns for factor '{factor_name}': "
+            f"{', '.join(missing)}"
+        )
+
+
 @runtime_checkable
 class BaseAlphaFactor(Protocol):
     """Protocol for canonical factor implementations.

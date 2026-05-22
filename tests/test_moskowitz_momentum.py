@@ -1,6 +1,7 @@
 """Tests for Moskowitz Momentum Factor."""
 
 import pandas as pd
+import pytest
 
 from signalforge.factor_base import BaseAlphaFactor, FACTOR_OUTPUT_COLUMNS
 from signalforge.factors.moskowitz_momentum import MoskowitzMomentumFactor
@@ -23,8 +24,7 @@ class TestMoskowitzMomentumFactor:
         factor = MoskowitzMomentumFactor()
         required = factor.required_inputs()
         assert isinstance(required, tuple)
-        assert "datetime" in required
-        assert "close" in required
+        assert required == ("datetime", "close", "symbol")
 
     def test_compute_returns_canonical_columns(self):
         data = pd.DataFrame({
@@ -154,11 +154,40 @@ class TestMoskowitzMomentumFactor:
             "high": [105.0] * 10,
             "low": [95.0] * 10,
             "volume": [1000000] * 10,
+            "symbol": ["AAPL"] * 10,
         })
 
         factor = MoskowitzMomentumFactor()
-        result = factor.compute(data)
 
-        assert list(result.columns) == FACTOR_OUTPUT_COLUMNS
-        assert len(result) == 1
-        assert pd.isnull(result["factor_value"].iloc[0])
+        with pytest.raises(ValueError, match="moskowitz_momentum.*close"):
+            factor.compute(data)
+
+    def test_compute_missing_datetime_column(self):
+        data = pd.DataFrame({
+            "open": [100.0] * 10,
+            "high": [105.0] * 10,
+            "low": [95.0] * 10,
+            "close": [102.0] * 10,
+            "volume": [1000000] * 10,
+            "symbol": ["AAPL"] * 10,
+        })
+
+        factor = MoskowitzMomentumFactor()
+
+        with pytest.raises(ValueError, match="moskowitz_momentum.*datetime"):
+            factor.compute(data)
+
+    def test_compute_missing_symbol_column(self):
+        data = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-01", periods=10, freq="D"),
+            "open": [100.0] * 10,
+            "high": [105.0] * 10,
+            "low": [95.0] * 10,
+            "close": [102.0] * 10,
+            "volume": [1000000] * 10,
+        })
+
+        factor = MoskowitzMomentumFactor()
+
+        with pytest.raises(ValueError, match="moskowitz_momentum.*symbol"):
+            factor.compute(data)

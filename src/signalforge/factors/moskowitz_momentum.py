@@ -13,7 +13,7 @@ Parameters:
 
 import pandas as pd
 
-from signalforge.factor_base import BaseAlphaFactor, FACTOR_OUTPUT_COLUMNS
+from signalforge.factor_base import BaseAlphaFactor, FACTOR_OUTPUT_COLUMNS, require_columns
 
 
 class MoskowitzMomentumFactor(BaseAlphaFactor):
@@ -24,7 +24,7 @@ class MoskowitzMomentumFactor(BaseAlphaFactor):
 
     def required_inputs(self) -> tuple[str, ...]:
         """Return required input columns."""
-        return ("datetime", "close")
+        return ("datetime", "close", "symbol")
 
     def compute(self, data: pd.DataFrame) -> pd.DataFrame:
         """Compute Moskowitz Momentum Factor.
@@ -36,18 +36,16 @@ class MoskowitzMomentumFactor(BaseAlphaFactor):
             DataFrame with canonical factor output columns:
             datetime, symbol, factor_name, factor_value, available_at
         """
-        df = data.copy()
+        require_columns(data, self.required_inputs(), self.name)
 
-        if "close" not in df.columns:
-            result = pd.DataFrame({col: [None] for col in FACTOR_OUTPUT_COLUMNS})
-            return result
+        df = data.copy()
 
         lookback_days = 252
         skip_days = 21
 
         factor_value = df["close"].shift(skip_days) / df["close"].shift(lookback_days) - 1
 
-        symbol = df["symbol"].iloc[0] if "symbol" in df.columns else None
+        symbol = df["symbol"].iloc[0]
 
         result = pd.DataFrame({
             "datetime": df["datetime"].values,

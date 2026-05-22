@@ -1,8 +1,14 @@
 """Tests for factor_base module."""
 
+import pytest
 import pandas as pd
 
-from signalforge.factor_base import BaseAlphaFactor, FACTOR_OUTPUT_COLUMNS, FactorProtocol
+from signalforge.factor_base import (
+    BaseAlphaFactor,
+    FACTOR_OUTPUT_COLUMNS,
+    FactorProtocol,
+    require_columns,
+)
 
 
 class TestBaseAlphaFactor:
@@ -100,6 +106,25 @@ class TestBaseAlphaFactor:
             "factor_value",
             "available_at",
         ]
+
+
+class TestRequireColumns:
+    def test_allows_present_columns(self):
+        data = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-01", periods=1),
+            "close": [100.0],
+            "symbol": ["AAPL"],
+        })
+
+        require_columns(data, ("datetime", "close", "symbol"), "test_factor")
+
+        assert list(data.columns) == ["datetime", "close", "symbol"]
+
+    def test_raises_clear_error_for_missing_columns(self):
+        data = pd.DataFrame({"datetime": pd.date_range("2024-01-01", periods=1)})
+
+        with pytest.raises(ValueError, match="test_factor.*close.*symbol"):
+            require_columns(data, ("datetime", "close", "symbol"), "test_factor")
 
 
 class TestFactorProtocol:
