@@ -11,7 +11,13 @@ from signalforge.schemas import (
     MissingColumnsError,
     SignalValidationError,
 )
-from signalforge.signal_composer import SignalComposer
+from signalforge.signal_composer import SIGNAL_CONTRACT_V01, SignalComposer
+from signalforge.signal_semantics import (
+    SIGNAL_CONTRACT_V02,
+    V02_SIGNAL_COLUMNS,
+    SignedUnitWeightPolicy,
+    validate_v02_signal_frame,
+)
 from signalforge.export import (
     export_signal_csv,
     export_signal_contract_yaml,
@@ -23,6 +29,7 @@ from signalforge.compatibility import validate_signal_market_date_alignment
 
 
 app = typer.Typer(help="SignalForge - Paper-derived factor and standardized signal generation layer")
+SUPPORTED_GENERATE_SIGNAL_CONTRACT_VERSIONS = (SIGNAL_CONTRACT_V01, SIGNAL_CONTRACT_V02)
 
 
 class PipelineError(Exception):
@@ -43,6 +50,27 @@ def validate_config(config: dict) -> list[str]:
     for field in required_fields:
         if field not in config or config[field] is None:
             errors.append(f"Missing required field: {field}")
+
+    signal_contract_version = config.get("signal_contract_version", SIGNAL_CONTRACT_V01)
+    if signal_contract_version not in SUPPORTED_GENERATE_SIGNAL_CONTRACT_VERSIONS:
+        errors.append(
+            "signal_contract_version must be one of "
+            f"{list(SUPPORTED_GENERATE_SIGNAL_CONTRACT_VERSIONS)}"
+        )
+
+    target_weight_config = config.get("target_weight", {})
+    if target_weight_config is not None and not isinstance(target_weight_config, dict):
+        errors.append("target_weight must be a dictionary")
+    elif signal_contract_version == SIGNAL_CONTRACT_V02 and target_weight_config:
+        method = target_weight_config.get("method", "signed_unit")
+        if method != "signed_unit":
+            errors.append("target_weight.method must be 'signed_unit' for v0.2")
+        for target_weight_field in ("max_abs_weight", "neutral_threshold"):
+            if target_weight_field in target_weight_config:
+                try:
+                    float(target_weight_config[target_weight_field])
+                except (TypeError, ValueError):
+                    errors.append(f"target_weight.{target_weight_field} must be numeric")
 
     if "data_source" in config:
         ds = config["data_source"]
@@ -97,6 +125,94 @@ def check_files_exist(output_dir: Path) -> list[Path]:
     return [f for f in files if f.exists()]
 
 
+def build_signed_unit_weight_policy(config: dict) -> SignedUnitWeightPolicy:
+    """Build a v0.2 signed-unit target-weight policy from config."""
+    target_weight_config = config.get("target_weight") or {}
+    method = target_weight_config.get("method", "signed_unit")
+    if method != "signed_unit":
+        raise ValueError("target_weight.method must be 'signed_unit' for v0.2")
+    return SignedUnitWeightPolicy(
+        max_abs_weight=float(target_weight_config.get("max_abs_weight", 1.0)),
+        neutral_threshold=float(target_weight_config.get("neutral_threshold", 0.0)),
+    )
+
+
+def export_generated_signal_csv(
+    signal_df,
+    output_dir: Path,
+    *,
+    signal_contract_version: str,
+) -> Path:
+    """Export generated v0.1 or v0.2 signal.csv rows."""
+    if signal_contract_version == SIGNAL_CONTRACT_V01:
+        return export_signal_csv(signal_df, output_dir, validate=True)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filepath = output_dir / "signal.csv"
+    v02_signal = validate_v02_signal_frame(signal_df)
+    v02_signal = v02_signal.sort_values(
+        by=["datetime", "symbol", "signal_name"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+    v02_signal.to_csv(filepath, index=False, lineterminator="\n")
+    return filepath
+
+
+def build_v02_signal_contract(
+    *,
+    signal_name: str,
+    source: str,
+    factor_name: str,
+    parameters: dict,
+    timing_rule: str,
+    symbols: list[str],
+    datetime_range: tuple[str, str],
+    factor_version: str,
+    target_weight_config: dict,
+) -> dict:
+    """Build deterministic v0.2 signal contract metadata."""
+    return {
+        "signal_name": signal_name,
+        "version": "0.2.0",
+        "source": source,
+        "factor": {
+            "name": factor_name,
+            "version": factor_version,
+            "parameters": dict(sorted(parameters.items())) if parameters else {},
+        },
+        "decision_rule": {
+            "score": "factor_value",
+            "direction": "sign(score) with optional neutral_threshold",
+            "target_weight": "direction * max_abs_weight using signed_unit policy",
+        },
+        "target_weight": {
+            "method": "signed_unit",
+            "max_abs_weight": float(target_weight_config.get("max_abs_weight", 1.0)),
+            "neutral_threshold": float(target_weight_config.get("neutral_threshold", 0.0)),
+        },
+        "data": {
+            "required_columns": ["datetime", "open", "high", "low", "close", "volume", "symbol"],
+        },
+        "timing": {
+            "available_at_rule": timing_rule,
+        },
+        "output": {
+            "file": "signal.csv",
+            "schema_version": SIGNAL_CONTRACT_V02,
+            "columns": list(V02_SIGNAL_COLUMNS),
+        },
+        "compatibility": {
+            "alphaforge_custom_signal_version": "v0.2",
+            "expected_execution_semantics": "signed_close_to_close_lagged",
+        },
+        "symbols": symbols,
+        "datetime_range": {
+            "start": datetime_range[0],
+            "end": datetime_range[1],
+        },
+    }
+
+
 @app.command()
 def generate(
     config: Path = typer.Option(..., "--config", "-c", help="Path to YAML config file"),
@@ -129,6 +245,8 @@ def generate(
     data_source = cfg["data_source"]
     datetime_range = cfg["datetime_range"]
     output_config = cfg["output"]
+    signal_contract_version = cfg.get("signal_contract_version", SIGNAL_CONTRACT_V01)
+    target_weight_config = cfg.get("target_weight") or {}
 
     data_path = data_source["path"]
     symbol = data_source["symbol"]
@@ -198,8 +316,10 @@ def generate(
             symbol=factor_output["symbol"].iloc[0] if "symbol" in factor_output.columns else symbol,
             signal_name=signal_name,
             source=source,
+            contract_version=signal_contract_version,
+            weight_policy=build_signed_unit_weight_policy(cfg) if signal_contract_version == SIGNAL_CONTRACT_V02 else None,
         )
-    except SignalValidationError as e:
+    except (SignalValidationError, ValueError) as e:
         typer.echo(f"Error: Signal composition failed: {e}", err=True)
         raise typer.Exit(1)
 
@@ -244,22 +364,36 @@ def generate(
             "null_count": int(signal_df["signal_binary"].isnull().sum()),
         }
 
-    contract = build_signal_contract(
-        signal_name=signal_name,
-        source=source,
-        factor_name=factor_name,
-        parameters=cfg.get("factor_params", {}),
-        decision_rule="1 if signal_value > 0 else 0",
-        timing_rule="same declared daily trading date as datetime for OHLCV-only daily signal",
-        symbols=[symbol],
-        datetime_range=(start_date, end_date),
-        row_count=len(signal_df),
-        signal_value_stats=signal_value_stats,
-        signal_binary_stats=signal_binary_stats,
-        symbol=symbol,
-        frequency="daily",
-        factor_version=factor.version,
-    )
+    timing_rule = "same declared daily trading date as datetime for OHLCV-only daily signal"
+    if signal_contract_version == SIGNAL_CONTRACT_V02:
+        contract = build_v02_signal_contract(
+            signal_name=signal_name,
+            source=source,
+            factor_name=factor_name,
+            parameters=cfg.get("factor_params", {}),
+            timing_rule=timing_rule,
+            symbols=[symbol],
+            datetime_range=(start_date, end_date),
+            factor_version=factor.version,
+            target_weight_config=target_weight_config,
+        )
+    else:
+        contract = build_signal_contract(
+            signal_name=signal_name,
+            source=source,
+            factor_name=factor_name,
+            parameters=cfg.get("factor_params", {}),
+            decision_rule="1 if signal_value > 0 else 0",
+            timing_rule=timing_rule,
+            symbols=[symbol],
+            datetime_range=(start_date, end_date),
+            row_count=len(signal_df),
+            signal_value_stats=signal_value_stats,
+            signal_binary_stats=signal_binary_stats,
+            symbol=symbol,
+            frequency="daily",
+            factor_version=factor.version,
+        )
 
     quality_report = build_market_data_quality_report(
         market_data=data,
@@ -268,7 +402,11 @@ def generate(
     )
 
     try:
-        export_signal_csv(signal_df, output_dir, validate=True)
+        export_generated_signal_csv(
+            signal_df,
+            output_dir,
+            signal_contract_version=signal_contract_version,
+        )
         export_signal_contract_yaml(contract, output_dir)
         export_data_quality_report(quality_report, output_dir)
     except Exception as e:
