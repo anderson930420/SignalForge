@@ -1,5 +1,6 @@
 """CLI for SignalForge signal generation."""
 
+import json
 from pathlib import Path
 
 import typer
@@ -25,6 +26,7 @@ from signalforge.export import (
     build_signal_contract,
     build_market_data_quality_report,
 )
+from signalforge.alphaforge_v02_smoke import export_demo_alphaforge_v02_compatibility_package
 from signalforge.compatibility import validate_signal_market_date_alignment
 
 
@@ -211,6 +213,21 @@ def build_v02_signal_contract(
             "end": datetime_range[1],
         },
     }
+
+
+@app.callback(invoke_without_command=True)
+def default_generate_compatibility(
+    ctx: typer.Context,
+    config: Path | None = typer.Option(None, "--config", "-c", help="Path to YAML config file"),
+    overwrite: bool = typer.Option(False, "--overwrite", "-o", help="Overwrite existing output files"),
+) -> None:
+    """Preserve legacy `signalforge --config ...` invocation after adding subcommands."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if config is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
+    generate(config=config, overwrite=overwrite)
 
 
 @app.command()
@@ -417,6 +434,48 @@ def generate(
     typer.echo(f"  - {output_dir}/signal.csv")
     typer.echo(f"  - {output_dir}/signal_contract.yaml")
     typer.echo(f"  - {output_dir}/data_quality_report.json")
+
+
+@app.command("export-alphaforge-v02-smoke")
+def export_alphaforge_v02_smoke(
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir",
+        "-o",
+        help="Directory where the deterministic AlphaForge v0.2 smoke package will be written",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite existing package files if they already exist",
+    ),
+) -> None:
+    """Export a deterministic v0.2 package that AlphaForge can smoke-test."""
+    required_files = (
+        "market_data.csv",
+        "signal.csv",
+        "signal_contract.yaml",
+        "data_quality_report.json",
+        "manifest.json",
+        "README.md",
+    )
+    existing = [name for name in required_files if (output_dir / name).exists()]
+    if existing and not overwrite:
+        typer.echo("Error: Output package files already exist. Use --overwrite to replace.", err=True)
+        typer.echo(f"Existing files: {existing}", err=True)
+        raise typer.Exit(1)
+
+    paths = export_demo_alphaforge_v02_compatibility_package(output_dir)
+    summary = {
+        "status": "exported",
+        "output_dir": str(output_dir),
+        "files": sorted(paths.keys()),
+        "alpha_forge_command": (
+            "python3 -m alphaforge.cli smoke-signalforge-package "
+            f"--package {output_dir}"
+        ),
+    }
+    typer.echo(json.dumps(summary, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
