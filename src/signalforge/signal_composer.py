@@ -3,19 +3,31 @@
 import pandas as pd
 
 from signalforge.schemas import SIGNAL_COLUMNS
+from signalforge.signal_semantics import (
+    SIGNAL_CONTRACT_V02,
+    V02_SIGNAL_COLUMNS,
+    SignedUnitWeightPolicy,
+    score_to_direction,
+    score_to_target_weight,
+    validate_v02_signal_frame,
+)
 
 
+SIGNAL_CONTRACT_V01 = "v0.1"
+DEFAULT_SIGNAL_CONTRACT_VERSION = SIGNAL_CONTRACT_V01
+SUPPORTED_SIGNAL_CONTRACT_VERSIONS = (SIGNAL_CONTRACT_V01, SIGNAL_CONTRACT_V02)
 SIGNAL_BINARY_RULE = "signal_binary = 1 if signal_value > 0 else 0"
 
 
 class SignalComposer:
     """Compose signal artifacts from factor outputs.
 
-    MVP rule for signal_binary derivation:
+    Default behavior remains the legacy v0.1 long/flat signal contract:
         signal_binary = 1 if signal_value > 0 else 0
 
-    This rule is applied when signal_binary is not explicitly provided
-    by the factor output.
+    v0.2 output is opt-in through ``contract_version=\"v0.2\"`` and emits
+    score, direction, and target_weight. SignalForge still emits alpha
+    semantics only; execution actions are derived downstream.
 
     Accepts either:
     - Canonical factor output (datetime, symbol, factor_name, factor_value, available_at)
@@ -26,7 +38,7 @@ class SignalComposer:
         self.validator = None
 
     def set_validator(self, validator) -> None:
-        """Set the signal validator."""
+        """Set the legacy v0.1 signal validator."""
         self.validator = validator
 
     def compose(
@@ -37,6 +49,9 @@ class SignalComposer:
         symbol: str | None = None,
         signal_name: str | None = None,
         source: str | None = None,
+        *,
+        contract_version: str = DEFAULT_SIGNAL_CONTRACT_VERSION,
+        weight_policy: SignedUnitWeightPolicy | None = None,
     ) -> pd.DataFrame:
         """Convert factor output to signal artifact rows.
 
@@ -49,12 +64,16 @@ class SignalComposer:
             symbol: Ticker symbol (optional if factor_output has symbol)
             signal_name: Name of the signal/factor (optional if factor_output has factor_name)
             source: Source identifier
+            contract_version: ``v0.1`` for legacy signal_binary output or ``v0.2``
+                for score/direction/target_weight output.
+            weight_policy: Optional v0.2 score-to-target-weight policy.
 
         Returns:
-            DataFrame conforming to signal artifact schema
+            DataFrame conforming to the requested signal artifact schema
 
         Raises:
-            SignalValidationError: If composed signal fails validation
+            SignalValidationError: If composed v0.1 signal fails validation
+            ValueError: If composed v0.2 signal fails validation
         """
         result = _compose_signal_frame(
             factor_output=factor_output,
@@ -63,9 +82,11 @@ class SignalComposer:
             symbol=symbol,
             signal_name=signal_name,
             source=source,
+            contract_version=contract_version,
+            weight_policy=weight_policy,
         )
 
-        if self.validator is not None:
+        if self.validator is not None and contract_version == SIGNAL_CONTRACT_V01:
             self.validator.validate_or_raise(result)
 
         return result
@@ -78,21 +99,14 @@ def compose_signal(
     symbol: str | None = None,
     signal_name: str | None = None,
     source: str | None = None,
+    *,
+    contract_version: str = DEFAULT_SIGNAL_CONTRACT_VERSION,
+    weight_policy: SignedUnitWeightPolicy | None = None,
 ) -> pd.DataFrame:
     """Convert factor output to signal artifact rows.
 
-    MVP rule: signal_binary = 1 if signal_value > 0 else 0
-
-    Args:
-        factor_output: DataFrame from factor calculation with canonical columns
-        datetime: Timestamp for the signal (optional if factor_output has datetime)
-        available_at: When signal became available (optional if factor_output has available_at)
-        symbol: Ticker symbol (optional if factor_output has symbol)
-        signal_name: Name of the signal/factor (optional if factor_output has factor_name)
-        source: Source identifier
-
-    Returns:
-        DataFrame conforming to signal artifact schema
+    Default behavior remains v0.1. Use ``contract_version=\"v0.2\"`` to emit
+    score, direction, and target_weight.
     """
     return _compose_signal_frame(
         factor_output=factor_output,
@@ -101,6 +115,8 @@ def compose_signal(
         symbol=symbol,
         signal_name=signal_name,
         source=source,
+        contract_version=contract_version,
+        weight_policy=weight_policy,
     )
 
 
@@ -123,10 +139,39 @@ def _compose_signal_frame(
     symbol: str | None,
     signal_name: str | None,
     source: str,
+    *,
+    contract_version: str,
+    weight_policy: SignedUnitWeightPolicy | None,
 ) -> pd.DataFrame:
-    if len(factor_output) == 0:
-        return pd.DataFrame(columns=SIGNAL_COLUMNS)
+    if contract_version not in SUPPORTED_SIGNAL_CONTRACT_VERSIONS:
+        raise ValueError(f"Unsupported signal contract version: {contract_version!r}")
+    if contract_version == SIGNAL_CONTRACT_V02:
+        return _compose_v02_signal_frame(
+            factor_output=factor_output,
+            datetime=datetime,
+            available_at=available_at,
+            symbol=symbol,
+            signal_name=signal_name,
+            source=source,
+            weight_policy=weight_policy,
+        )
+    return _compose_v01_signal_frame(
+        factor_output=factor_output,
+        datetime=datetime,
+        available_at=available_at,
+        symbol=symbol,
+        signal_name=signal_name,
+        source=source,
+    )
 
+
+def _resolve_common_signal_fields(
+    factor_output: pd.DataFrame,
+    datetime: pd.Timestamp | pd.Series | list | tuple | None,
+    available_at: pd.Timestamp | pd.Series | list | tuple | None,
+    symbol: str | None,
+    signal_name: str | None,
+) -> tuple[pd.Series, pd.Series, str, str]:
     n_rows = len(factor_output)
 
     if "datetime" in factor_output.columns and datetime is None:
@@ -157,19 +202,47 @@ def _compose_signal_frame(
     else:
         sn_value = signal_name
 
+    return _as_series(dt_values, n_rows), _as_series(av_values, n_rows), sym_value, sn_value
+
+
+def _resolve_score_values(factor_output: pd.DataFrame, n_rows: int) -> pd.Series:
+    if "factor_value" in factor_output.columns:
+        return factor_output["factor_value"].reset_index(drop=True)
+    if "signal_value" in factor_output.columns:
+        return factor_output["signal_value"].reset_index(drop=True)
+    if "score" in factor_output.columns:
+        return factor_output["score"].reset_index(drop=True)
+    return pd.Series([None] * n_rows)
+
+
+def _compose_v01_signal_frame(
+    factor_output: pd.DataFrame,
+    datetime: pd.Timestamp | pd.Series | list | tuple | None,
+    available_at: pd.Timestamp | pd.Series | list | tuple | None,
+    symbol: str | None,
+    signal_name: str | None,
+    source: str,
+) -> pd.DataFrame:
+    if len(factor_output) == 0:
+        return pd.DataFrame(columns=SIGNAL_COLUMNS)
+
+    n_rows = len(factor_output)
+    dt_values, av_values, sym_value, sn_value = _resolve_common_signal_fields(
+        factor_output,
+        datetime,
+        available_at,
+        symbol,
+        signal_name,
+    )
+
     result = pd.DataFrame(index=range(n_rows))
-    result["datetime"] = _as_series(dt_values, n_rows)
-    result["available_at"] = _as_series(av_values, n_rows)
+    result["datetime"] = dt_values
+    result["available_at"] = av_values
     result["symbol"] = sym_value
     result["signal_name"] = sn_value
     result["source"] = source
 
-    if "factor_value" in factor_output.columns:
-        signal_values = factor_output["factor_value"].reset_index(drop=True)
-    elif "signal_value" in factor_output.columns:
-        signal_values = factor_output["signal_value"].reset_index(drop=True)
-    else:
-        signal_values = pd.Series([None] * n_rows)
+    signal_values = _resolve_score_values(factor_output, n_rows)
     result["signal_value"] = signal_values
 
     if "signal_binary" in factor_output.columns:
@@ -186,3 +259,39 @@ def _compose_signal_frame(
 
     result = result[SIGNAL_COLUMNS]
     return result
+
+
+def _compose_v02_signal_frame(
+    factor_output: pd.DataFrame,
+    datetime: pd.Timestamp | pd.Series | list | tuple | None,
+    available_at: pd.Timestamp | pd.Series | list | tuple | None,
+    symbol: str | None,
+    signal_name: str | None,
+    source: str,
+    weight_policy: SignedUnitWeightPolicy | None,
+) -> pd.DataFrame:
+    if len(factor_output) == 0:
+        return pd.DataFrame(columns=V02_SIGNAL_COLUMNS)
+
+    n_rows = len(factor_output)
+    policy = weight_policy or SignedUnitWeightPolicy()
+    dt_values, av_values, sym_value, sn_value = _resolve_common_signal_fields(
+        factor_output,
+        datetime,
+        available_at,
+        symbol,
+        signal_name,
+    )
+    score_values = pd.to_numeric(_resolve_score_values(factor_output, n_rows), errors="raise")
+
+    result = pd.DataFrame(index=range(n_rows))
+    result["datetime"] = dt_values
+    result["available_at"] = av_values
+    result["symbol"] = sym_value
+    result["signal_name"] = sn_value
+    result["score"] = score_values
+    result["direction"] = [score_to_direction(value, neutral_threshold=policy.neutral_threshold) for value in score_values]
+    result["target_weight"] = [score_to_target_weight(value, policy) for value in score_values]
+    result["source"] = source
+
+    return validate_v02_signal_frame(result.loc[:, list(V02_SIGNAL_COLUMNS)])
