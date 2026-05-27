@@ -26,6 +26,10 @@ from signalforge.export import (
     build_signal_contract,
     build_market_data_quality_report,
 )
+from signalforge.alphaforge_v02_package import (
+    export_alphaforge_v02_package_from_generated_artifacts,
+    package_output_files_exist,
+)
 from signalforge.alphaforge_v02_smoke import export_demo_alphaforge_v02_compatibility_package
 from signalforge.compatibility import validate_signal_market_date_alignment
 
@@ -468,6 +472,61 @@ def export_alphaforge_v02_smoke(
     paths = export_demo_alphaforge_v02_compatibility_package(output_dir)
     summary = {
         "status": "exported",
+        "output_dir": str(output_dir),
+        "files": sorted(paths.keys()),
+        "alpha_forge_command": (
+            "python3 -m alphaforge.cli smoke-signalforge-package "
+            f"--package {output_dir}"
+        ),
+    }
+    typer.echo(json.dumps(summary, indent=2, sort_keys=True))
+
+
+@app.command("package-alphaforge-v02")
+def package_alphaforge_v02(
+    artifact_dir: Path = typer.Option(
+        ...,
+        "--artifact-dir",
+        help="Directory produced by `signalforge generate` containing signal.csv and signal_contract.yaml",
+    ),
+    market_data: Path = typer.Option(
+        ...,
+        "--market-data",
+        help="Original OHLCV CSV used to generate the signal",
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir",
+        "-o",
+        help="Directory where the AlphaForge-compatible package will be written",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite existing package files if they already exist",
+    ),
+) -> None:
+    """Package real generated v0.2 artifacts for AlphaForge consumption."""
+    existing = package_output_files_exist(output_dir)
+    if existing and not overwrite:
+        typer.echo("Error: Output package files already exist. Use --overwrite to replace.", err=True)
+        typer.echo(f"Existing files: {[str(path) for path in existing]}", err=True)
+        raise typer.Exit(1)
+
+    try:
+        paths = export_alphaforge_v02_package_from_generated_artifacts(
+            artifact_dir=artifact_dir,
+            market_data_path=market_data,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        typer.echo(f"Error: Failed to package AlphaForge v0.2 artifacts: {exc}", err=True)
+        raise typer.Exit(1)
+
+    summary = {
+        "status": "packaged",
+        "artifact_dir": str(artifact_dir),
+        "market_data": str(market_data),
         "output_dir": str(output_dir),
         "files": sorted(paths.keys()),
         "alpha_forge_command": (
