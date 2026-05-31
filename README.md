@@ -1,35 +1,214 @@
 # SignalForge
 
-**Purpose:** SignalForge is a paper-derived factor and standardized signal generation layer. It transforms OHLCV market data and factor definitions into deterministic, AlphaForge-compatible signal artifacts.
+SignalForge is a deterministic signal-generation layer for quantitative research.
+It converts OHLCV market data and factor definitions into standardized,
+AlphaForge-compatible signal artifacts.
 
-**SignalForge is not a backtester.**
+SignalForge is **not** a backtester. It is the upstream signal factory in my
+portfolio: it produces clean signal packages, while AlphaForge performs research
+validation, backtesting evidence generation, walk-forward analysis, and reporting.
 
 ---
 
-## Project Boundary
+## Portfolio Snapshot
 
-### What SignalForge Owns
+| Area                 | What SignalForge Demonstrates                                        |
+| -------------------- | -------------------------------------------------------------------- |
+| Quant research       | Paper-derived factor implementation and signal generation            |
+| Data engineering     | OHLCV input contracts, data quality reporting, deterministic exports |
+| Software engineering | CLI workflow, schema validation, artifact-oriented design            |
+| Research hygiene     | Clear separation between signal generation and backtest evaluation   |
+| Integration          | AlphaForge-compatible `custom_signal` handoff                        |
 
-- OHLCV data input for signal generation
-- Future multi-source data contract boundaries
-- Factor calculation
-- Signal composition
-- signal.csv export
-- signal_contract.yaml export
-- data_quality_report.json export
-- AlphaForge-compatible signal schema validation
+---
 
-### What SignalForge Does Not Own
+## What Problem This Solves
 
-- Backtesting
-- Performance metric ranking (Sharpe, drawdown, CAGR, etc.)
-- Final holdout evaluation
-- Portfolio construction
-- Live trading
-- Broker execution
-- AlphaForge report generation
+Many quant side projects mix factor calculation, signal generation, backtesting,
+and performance reporting in one script or notebook.
 
-**Note:** AlphaForge remains the validation backend for backtesting, evidence evaluation, walk-forward analysis, and final holdout evaluation.
+SignalForge separates one specific responsibility:
+
+> turn market data and factor definitions into validated signal artifacts that
+> another research engine can evaluate.
+
+This separation matters because signal generation and strategy validation are
+different concerns. SignalForge owns the reproducible creation of signal packages.
+AlphaForge owns downstream validation, backtesting evidence, walk-forward
+analysis, and final research reports.
+
+---
+
+## System Overview
+
+```text
+OHLCV Market Data
+  → Data Quality Check
+  → Factor Calculation
+  → Signal Composition
+  → Signal Schema Validation
+  → signal.csv
+  → signal_contract.yaml
+  → data_quality_report.json
+  → AlphaForge custom_signal validation
+```
+
+SignalForge focuses on deterministic artifact production. The output package is
+designed to be inspected directly or consumed by AlphaForge through a file-based
+handoff.
+
+---
+
+## Architecture Diagram
+
+```mermaid
+flowchart TD
+    A[OHLCV Market Data] --> B[Data Quality Check]
+    B --> C[Factor Calculation]
+    C --> D[Signal Composition]
+    D --> E[Signal Schema Validation]
+
+    E --> F[signal.csv]
+    E --> G[signal_contract.yaml]
+    E --> H[data_quality_report.json]
+
+    F --> I[AlphaForge custom_signal Strategy]
+    G --> I
+    H --> I
+
+    I --> J[Research Validation / Backtesting Evidence]
+
+    subgraph SignalForge_Owns
+        B
+        C
+        D
+        E
+        F
+        G
+        H
+    end
+
+    subgraph AlphaForge_Owns
+        I
+        J
+    end
+```
+
+---
+
+## Current Capabilities
+
+* Local OHLCV CSV input for signal generation
+* Data quality report generation
+* Paper-derived factor implementation
+* Signal composition
+* Deterministic `signal.csv` export
+* `signal_contract.yaml` export
+* `data_quality_report.json` export
+* AlphaForge-compatible signal schema validation
+* CLI-based signal generation workflow
+* Moskowitz-style time-series momentum MVP factor
+* Explicit daily datetime policy for MVP OHLCV signals
+* File-based AlphaForge handoff without runtime coupling
+
+---
+
+## Demo: Generate a Signal Package
+
+Prepare an OHLCV CSV file with the required market data columns:
+
+```text
+datetime, open, high, low, close, volume
+```
+
+Edit the example config:
+
+```text
+examples/twse_2330_moskowitz_signal.yaml
+```
+
+Run the generator:
+
+```bash
+signalforge generate --config examples/twse_2330_moskowitz_signal.yaml --overwrite
+```
+
+Or run it as a Python module:
+
+```bash
+python -m signalforge.cli generate --config examples/twse_2330_moskowitz_signal.yaml --overwrite
+```
+
+Every successful run produces a signal package containing:
+
+```text
+signal.csv
+signal_contract.yaml
+data_quality_report.json
+```
+
+---
+
+## Evidence of Engineering Quality
+
+Recommended validation commands:
+
+```bash
+python -m pytest
+ruff check .
+openspec validate --all --strict
+```
+
+The repository is designed around deterministic exports and explicit contracts.
+Instead of mixing research claims with implementation code, SignalForge produces
+reviewable artifacts that can be validated independently.
+
+---
+
+## Boundaries
+
+SignalForge intentionally does **not** provide:
+
+* Backtesting
+* Performance metric ranking
+* Final holdout evaluation
+* Portfolio construction
+* Live trading
+* Broker execution
+* AlphaForge report generation
+
+For these capabilities, use AlphaForge after generating signal artifacts with
+SignalForge.
+
+SignalForge produces signal artifacts. AlphaForge remains the validation backend
+for backtesting, evidence evaluation, walk-forward analysis, and final holdout
+evaluation.
+
+---
+
+## Portfolio Context
+
+SignalForge is the upstream signal-generation layer in my quantitative research
+toolchain.
+
+```text
+SignalForge
+  → generates standardized factor / signal artifacts
+
+AlphaForge
+  → validates signals, runs ML experiments, and produces research artifacts
+
+bs_pricer
+  → demonstrates financial engineering model implementation
+
+agent-taskflow
+  → demonstrates human-gated automation, validation, and proof-of-work workflows
+```
+
+Together, these projects show a broader direction:
+
+> building reproducible quantitative research tools with clear engineering
+> boundaries, deterministic artifacts, and reviewable evidence.
 
 ---
 
