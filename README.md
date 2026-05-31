@@ -1,5 +1,7 @@
 # SignalForge
 
+[English](README.md) | [繁體中文](README.zh-TW.md)
+
 SignalForge is a deterministic signal-generation layer for quantitative research.
 It converts OHLCV market data and factor definitions into standardized,
 AlphaForge-compatible signal artifacts.
