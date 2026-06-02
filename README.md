@@ -33,6 +33,47 @@
 
 ---
 
+## Architecture Diagram
+
+```mermaid
+flowchart LR
+    A[OHLCV Market Data] --> B[Data Quality Check]
+    B --> C[Factor Calculation]
+    C --> D[Signal Composition]
+    D --> E[Signal Schema Validation]
+
+    E --> F[signal.csv]
+    E --> G[signal_contract.yaml]
+    E --> H[data_quality_report.json]
+
+    F --> P[Signal Package]
+    G --> P
+    H --> P
+
+    P --> I[AlphaForge custom_signal]
+    I --> J[Validation / Backtesting / ML Research]
+    J --> K[Research Evidence Reports]
+
+    subgraph SignalForge
+        B
+        C
+        D
+        E
+        F
+        G
+        H
+        P
+    end
+
+    subgraph AlphaForge
+        I
+        J
+        K
+    end
+```
+
+---
+
 ## Installation / Development Setup
 
 ```bash
